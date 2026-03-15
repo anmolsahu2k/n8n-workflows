@@ -1,0 +1,222 @@
+{
+  "name": "Blog Pipeline (Simple)",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "GET",
+        "path": "blog-simple",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-get",
+      "name": "GET: Idea Form",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [0, 300],
+      "webhookId": "blog-simple-get"
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "blog-simple",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-post",
+      "name": "POST: Actions",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [0, 500],
+      "webhookId": "blog-simple-post"
+    },
+    {
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "<!DOCTYPE html><html><head><meta charset=\"UTF-8\"><title>Blog Pipeline</title><style>*{box-sizing:border-box}body{font-family:system-ui,sans-serif;max-width:600px;margin:80px auto;padding:0 24px;background:#f9fafb}h1{font-size:1.4rem;margin-bottom:4px}p{color:#555;margin-bottom:18px}textarea{width:100%;height:120px;padding:12px;font-size:1rem;border:1px solid #d1d5db;border-radius:8px;resize:vertical;font-family:inherit}button{margin-top:12px;padding:12px 28px;background:#2563eb;color:#fff;border:none;border-radius:8px;font-size:1rem;cursor:pointer;font-weight:600}</style></head><body><h1>📝 Blog Pipeline</h1><p>Type an idea — Claude writes the draft, you approve before anything is published.</p><form method=\"POST\" action=\"/webhook/blog-simple\"><input type=\"hidden\" name=\"action\" value=\"generate\"><textarea name=\"idea\" placeholder=\"e.g. Why most developers overlook observability until it's too late\" required></textarea><br><button type=\"submit\">Generate Draft →</button></form></body></html>",
+        "options": {
+          "responseHeaders": {
+            "entries": [{"name": "Content-Type", "value": "text/html; charset=utf-8"}]
+          }
+        }
+      },
+      "id": "respond-form",
+      "name": "Respond: Idea Form",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [220, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const body = $input.first().json.body || {};\nconst action = body.action || '';\nconst idea = (body.idea || '').trim();\nconst draftId = body.draftId || '';\nconst staticData = $getWorkflowStaticData('global');\nconst draft = (staticData.drafts || {})[draftId] || null;\nreturn [{ json: { action, idea, draftId, draft } }];"
+      },
+      "id": "parse-request",
+      "name": "Parse Request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [220, 500]
+    },
+    {
+      "parameters": {
+        "dataType": "string",
+        "value1": "={{ $json.action }}",
+        "rules": {
+          "rules": [
+            {"value2": "generate"},
+            {"value2": "approve"},
+            {"value2": "regenerate"},
+            {"value2": "cancel"}
+          ]
+        },
+        "fallbackOutput": "extra"
+      },
+      "id": "route-action",
+      "name": "Route Action",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 1,
+      "position": [440, 500]
+    },
+    {
+      "parameters": {
+        "command": "=blog:{{ Buffer.from($json.idea).toString('base64') }}",
+        "options": {}
+      },
+      "id": "ssh-generate",
+      "name": "SSH: Generate via Claude",
+      "type": "n8n-nodes-base.ssh",
+      "typeVersion": 1,
+      "position": [660, 380],
+      "onError": "continueErrorOutput",
+      "credentials": {"sshPassword": {"id": "SSH_CREDENTIAL_ID", "name": "Mac SSH"}}
+    },
+    {
+      "parameters": {
+        "jsCode": "const req = $('Parse Request').first().json;\nconst idea = req.idea;\nconst stdout = ($input.first().json.stdout || '').trim();\nif (!stdout) throw new Error('Empty response from Claude');\nconst draftId = 'draft_' + Date.now();\nconst staticData = $getWorkflowStaticData('global');\nstaticData.drafts = staticData.drafts || {};\nstaticData.drafts[draftId] = { idea, content: stdout, createdAt: new Date().toISOString() };\nconst esc = s => String(s).replace(/&/g,'&amp;').replace(/\"/g,'&quot;').replace(/'/g,'&#39;').replace(/</g,'&lt;').replace(/>/g,'&gt;');\nconst html = `<!DOCTYPE html><html><head><meta charset=\"UTF-8\"><title>Review Draft</title><style>*{box-sizing:border-box}body{font-family:system-ui,sans-serif;max-width:700px;margin:40px auto;padding:0 24px;background:#f9fafb}h2{font-size:1.2rem;margin-bottom:6px}pre{white-space:pre-wrap;word-break:break-word;background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:20px;max-height:60vh;overflow-y:auto;font-family:inherit;font-size:.95rem;line-height:1.6}.actions{display:flex;gap:10px;margin-top:16px}.btn-approve{background:#16a34a;color:#fff;padding:10px 22px;border:none;border-radius:6px;cursor:pointer;font-weight:600}.btn-regen{background:#d97706;color:#fff;padding:10px 22px;border:none;border-radius:6px;cursor:pointer;font-weight:600}.btn-cancel{background:#6b7280;color:#fff;padding:10px 22px;border:none;border-radius:6px;cursor:pointer;font-weight:600}</style></head><body><h2>📄 Review Your Draft</h2><pre>${esc(stdout)}</pre><div class=\"actions\"><form method=\"POST\" action=\"/webhook/blog-simple\"><input type=\"hidden\" name=\"action\" value=\"approve\"><input type=\"hidden\" name=\"draftId\" value=\"${esc(draftId)}\"><button class=\"btn-approve\">✅ Approve &amp; Publish</button></form><form method=\"POST\" action=\"/webhook/blog-simple\"><input type=\"hidden\" name=\"action\" value=\"regenerate\"><input type=\"hidden\" name=\"idea\" value=\"${esc(idea)}\"><button class=\"btn-regen\">🔄 Regenerate</button></form><form method=\"POST\" action=\"/webhook/blog-simple\"><input type=\"hidden\" name=\"action\" value=\"cancel\"><input type=\"hidden\" name=\"draftId\" value=\"${esc(draftId)}\"><button class=\"btn-cancel\">✕ Cancel</button></form></div></body></html>`;\nreturn [{ json: { html, draftId } }];"
+      },
+      "id": "save-draft",
+      "name": "Save Draft + Build Preview",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [880, 300]
+    },
+    {
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "={{ $json.html }}",
+        "options": {
+          "responseHeaders": {
+            "entries": [{"name": "Content-Type", "value": "text/html; charset=utf-8"}]
+          }
+        }
+      },
+      "id": "respond-preview",
+      "name": "Respond: Draft Preview",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [1100, 300]
+    },
+    {
+      "parameters": {
+        "operation": "create",
+        "title": "={{ $json.draft.content.split('\\n')[0].replace(/^#+\\s*/, '') }}",
+        "contentFormat": "markdown",
+        "content": "={{ $json.draft.content }}",
+        "additionalFields": {
+          "publishStatus": "public"
+        }
+      },
+      "id": "medium-publish",
+      "name": "Medium: Publish",
+      "type": "n8n-nodes-base.medium",
+      "typeVersion": 1,
+      "position": [660, 500],
+      "onError": "continueErrorOutput",
+      "credentials": {"mediumApi": {"id": "MEDIUM_CREDENTIAL_ID", "name": "Medium"}}
+    },
+    {
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "=<!DOCTYPE html><html><head><meta charset=\"UTF-8\"><title>Published!</title><style>body{font-family:system-ui,sans-serif;max-width:600px;margin:80px auto;padding:0 24px;text-align:center}a{color:#2563eb}</style></head><body><h2>🎉 Published to Medium!</h2><p><a href=\"{{ $json.url }}\" target=\"_blank\">View your post →</a></p><p><a href=\"/webhook/blog-simple\">← Write another</a></p></body></html>",
+        "options": {
+          "responseHeaders": {
+            "entries": [{"name": "Content-Type", "value": "text/html; charset=utf-8"}]
+          }
+        }
+      },
+      "id": "respond-done",
+      "name": "Respond: Published",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [880, 500]
+    },
+    {
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "<!DOCTYPE html><html><head><meta charset=\"UTF-8\"><title>Cancelled</title><style>body{font-family:system-ui,sans-serif;max-width:600px;margin:80px auto;padding:0 24px;text-align:center}a{color:#2563eb}</style></head><body><h2>✕ Cancelled</h2><p>No post was published.</p><p><a href=\"/webhook/blog-simple\">← Start over</a></p></body></html>",
+        "options": {
+          "responseHeaders": {
+            "entries": [{"name": "Content-Type", "value": "text/html; charset=utf-8"}]
+          }
+        }
+      },
+      "id": "respond-cancelled",
+      "name": "Respond: Cancelled",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [660, 680]
+    },
+    {
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "<!DOCTYPE html><html><head><meta charset=\"UTF-8\"><title>Error</title><style>body{font-family:system-ui,sans-serif;max-width:600px;margin:80px auto;padding:0 24px;text-align:center}a{color:#2563eb}</style></head><body><h2>⚠️ Something went wrong</h2><p>Claude may be unavailable or returned an empty response.</p><p><a href=\"/webhook/blog-simple\">← Try again</a></p></body></html>",
+        "options": {
+          "responseHeaders": {
+            "entries": [{"name": "Content-Type", "value": "text/html; charset=utf-8"}]
+          }
+        }
+      },
+      "id": "respond-error",
+      "name": "Respond: Error",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [880, 680]
+    }
+  ],
+  "connections": {
+    "GET: Idea Form": {
+      "main": [[{"node": "Respond: Idea Form", "type": "main", "index": 0}]]
+    },
+    "POST: Actions": {
+      "main": [[{"node": "Parse Request", "type": "main", "index": 0}]]
+    },
+    "Parse Request": {
+      "main": [[{"node": "Route Action", "type": "main", "index": 0}]]
+    },
+    "Route Action": {
+      "main": [
+        [{"node": "SSH: Generate via Claude", "type": "main", "index": 0}],
+        [{"node": "Medium: Publish", "type": "main", "index": 0}],
+        [{"node": "SSH: Generate via Claude", "type": "main", "index": 0}],
+        [{"node": "Respond: Cancelled", "type": "main", "index": 0}],
+        [{"node": "Respond: Error", "type": "main", "index": 0}]
+      ]
+    },
+    "SSH: Generate via Claude": {
+      "main": [
+        [{"node": "Save Draft + Build Preview", "type": "main", "index": 0}],
+        [{"node": "Respond: Error", "type": "main", "index": 0}]
+      ]
+    },
+    "Save Draft + Build Preview": {
+      "main": [[{"node": "Respond: Draft Preview", "type": "main", "index": 0}]]
+    },
+    "Medium: Publish": {
+      "main": [
+        [{"node": "Respond: Published", "type": "main", "index": 0}],
+        [{"node": "Respond: Error", "type": "main", "index": 0}]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

@@ -1,0 +1,684 @@
+{
+  "name": "LinkedIn Post Pipeline",
+  "nodes": [
+    {
+      "parameters": {
+        "updates": ["message", "callback_query"]
+      },
+      "id": "telegram-trigger",
+      "name": "Telegram Trigger",
+      "type": "n8n-nodes-base.telegramTrigger",
+      "typeVersion": 1,
+      "position": [0, 300],
+      "webhookId": "linkedin-pipeline",
+      "credentials": {
+        "telegramApi": { "id": "TELEGRAM_CREDENTIAL_ID", "name": "Telegram Bot" }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{ ($json.message?.chat?.id ?? $json.callback_query?.message?.chat?.id).toString() }}",
+              "value2": "YOUR_CHAT_ID"
+            }
+          ]
+        }
+      },
+      "id": "auth-gate",
+      "name": "Auth Gate",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [220, 300]
+    },
+    {
+      "parameters": {
+        "chatId": "={{ ($json.message?.chat?.id ?? $json.callback_query?.message?.chat?.id).toString() }}",
+        "text": "⛔ Unauthorized",
+        "additionalFields": {}
+      },
+      "id": "unauthorized-msg",
+      "name": "Send Unauthorized",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1,
+      "position": [440, 460],
+      "credentials": {
+        "telegramApi": { "id": "TELEGRAM_CREDENTIAL_ID", "name": "Telegram Bot" }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $json.message !== undefined }}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "route-type",
+      "name": "Message or Callback?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [440, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{ typeof $json.message.text }}",
+              "value2": "string"
+            }
+          ],
+          "number": [
+            {
+              "value1": "={{ $json.message.text?.trim().length ?? 0 }}",
+              "operation": "larger",
+              "value2": 0
+            }
+          ]
+        }
+      },
+      "id": "text-guard",
+      "name": "Text Only Guard",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [660, 200]
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $json.message.chat.id }}",
+        "text": "Please send plain text — no stickers or media.",
+        "additionalFields": {}
+      },
+      "id": "not-text-msg",
+      "name": "Not Text Message",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1,
+      "position": [880, 100],
+      "credentials": {
+        "telegramApi": { "id": "TELEGRAM_CREDENTIAL_ID", "name": "Telegram Bot" }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const msg = $input.first().json;\nreturn [{ json: {\n  idea: msg.message.text.trim(),\n  chatId: msg.message.chat.id,\n  draftId: Date.now().toString(36) + Math.random().toString(36).substring(2, 5)\n} }];"
+      },
+      "id": "extract-idea",
+      "name": "Extract Idea",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [880, 220]
+    },
+    {
+      "parameters": {
+        "command": "={{ $json.idea }}",
+        "options": {}
+      },
+      "id": "ssh-generate",
+      "name": "SSH Generate Post",
+      "type": "n8n-nodes-base.ssh",
+      "typeVersion": 1,
+      "position": [1100, 220],
+      "credentials": {
+        "sshPassword": { "id": "SSH_CREDENTIAL_ID", "name": "Mac SSH" }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('Extract Idea').first().json.chatId }}",
+        "text": "Could not reach Claude. Is it running?",
+        "additionalFields": {}
+      },
+      "id": "ssh-error-msg",
+      "name": "SSH Error Message",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1,
+      "position": [1320, 120],
+      "credentials": {
+        "telegramApi": { "id": "TELEGRAM_CREDENTIAL_ID", "name": "Telegram Bot" }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "number": [
+            {
+              "value1": "={{ $json.stdout?.trim().length ?? 0 }}",
+              "operation": "larger",
+              "value2": 0
+            }
+          ]
+        }
+      },
+      "id": "check-output",
+      "name": "Check Claude Output",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [1320, 260]
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('Extract Idea').first().json.chatId }}",
+        "text": "Claude returned empty output. Please try again.",
+        "additionalFields": {}
+      },
+      "id": "empty-output-msg",
+      "name": "Empty Output Message",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1,
+      "position": [1540, 160],
+      "credentials": {
+        "telegramApi": { "id": "TELEGRAM_CREDENTIAL_ID", "name": "Telegram Bot" }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const { idea, chatId, draftId } = $('Extract Idea').first().json;\nconst post = $input.first().json.stdout.trim();\nconst staticData = $getWorkflowStaticData('global');\nstaticData.drafts = staticData.drafts || {};\nstaticData.drafts[draftId] = { idea, post, status: 'pending', createdAt: new Date().toISOString() };\nreturn [{ json: { idea, post, chatId, draftId } }];"
+      },
+      "id": "save-draft",
+      "name": "Save Draft",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1540, 300]
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $json.chatId }}",
+        "text": "=Here's your LinkedIn draft:\n\n{{ $json.post }}\n\n─────────────────\nWhat would you like to do?",
+        "additionalFields": {
+          "replyMarkup": "inlineKeyboard",
+          "inlineKeyboard": {
+            "rows": [
+              {
+                "row": {
+                  "buttons": [
+                    {
+                      "text": "✅ Post to LinkedIn",
+                      "additionalFields": {
+                        "callbackData": "=post:{{ $json.draftId }}"
+                      }
+                    },
+                    {
+                      "text": "🔄 Regenerate",
+                      "additionalFields": {
+                        "callbackData": "=regenerate:{{ $json.draftId }}"
+                      }
+                    },
+                    {
+                      "text": "❌ Cancel",
+                      "additionalFields": {
+                        "callbackData": "=cancel:{{ $json.draftId }}"
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      },
+      "id": "send-draft",
+      "name": "Send Draft + Buttons",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1,
+      "position": [1760, 300],
+      "credentials": {
+        "telegramApi": { "id": "TELEGRAM_CREDENTIAL_ID", "name": "Telegram Bot" }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const cb = $input.first().json.callback_query;\nconst parts = (cb.data || '').split(':');\nreturn [{ json: {\n  callbackId: cb.id,\n  prevMessageId: cb.message.message_id,\n  action: parts[0] || '',\n  draftId: parts[1] || '',\n  chatId: cb.message.chat.id,\n  malformed: parts.length !== 2\n} }];"
+      },
+      "id": "parse-callback",
+      "name": "Parse Callback",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [660, 420]
+    },
+    {
+      "parameters": {
+        "resource": "callback",
+        "operation": "answerQuery",
+        "queryId": "={{ $json.callbackId }}",
+        "additionalFields": {}
+      },
+      "id": "answer-callback",
+      "name": "Answer Callback",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1,
+      "position": [880, 420],
+      "credentials": {
+        "telegramApi": { "id": "TELEGRAM_CREDENTIAL_ID", "name": "Telegram Bot" }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{ json: $('Parse Callback').first().json }];"
+      },
+      "id": "restore-callback",
+      "name": "Restore Callback Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1100, 420]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [{ "value1": "={{ $json.malformed }}", "value2": false }]
+        }
+      },
+      "id": "malformed-guard",
+      "name": "Malformed Guard",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [1320, 420]
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $json.chatId }}",
+        "text": "Unknown button — try sending a new idea.",
+        "additionalFields": {}
+      },
+      "id": "malformed-msg",
+      "name": "Malformed Message",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1,
+      "position": [1320, 340],
+      "credentials": {
+        "telegramApi": { "id": "TELEGRAM_CREDENTIAL_ID", "name": "Telegram Bot" }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const { draftId, chatId, action, callbackId, prevMessageId, malformed } = $input.first().json;\nconst staticData = $getWorkflowStaticData('global');\nconst draft = (staticData.drafts || {})[draftId];\nif (!draft) {\n  return [{ json: { notFound: true, chatId, draftId, action, callbackId, prevMessageId } }];\n}\nreturn [{ json: { ...draft, draftId, chatId, action, callbackId, prevMessageId, notFound: false } }];"
+      },
+      "id": "load-draft",
+      "name": "Load Draft",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1320, 480]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [{ "value1": "={{ $json.notFound }}", "value2": false }]
+        }
+      },
+      "id": "draft-found-guard",
+      "name": "Draft Found Guard",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [1540, 480]
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $json.chatId }}",
+        "text": "No draft found. Send a new idea.",
+        "additionalFields": {}
+      },
+      "id": "no-draft-msg",
+      "name": "No Draft Message",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1,
+      "position": [1760, 380],
+      "credentials": {
+        "telegramApi": { "id": "TELEGRAM_CREDENTIAL_ID", "name": "Telegram Bot" }
+      }
+    },
+    {
+      "parameters": {
+        "dataType": "string",
+        "value1": "={{ $json.status === 'pending' ? 'proceed' : 'not-pending' }}",
+        "rules": {
+          "rules": [
+            { "value2": "proceed" },
+            { "value2": "not-pending" }
+          ]
+        },
+        "fallbackOutput": 1
+      },
+      "id": "status-guard",
+      "name": "Status Guard",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 1,
+      "position": [1760, 520]
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $json.chatId }}",
+        "text": "=This draft was already {{ $json.status }}. Send a new idea.",
+        "additionalFields": {}
+      },
+      "id": "not-pending-msg",
+      "name": "Not Pending Message",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1,
+      "position": [1980, 620],
+      "credentials": {
+        "telegramApi": { "id": "TELEGRAM_CREDENTIAL_ID", "name": "Telegram Bot" }
+      }
+    },
+    {
+      "parameters": {
+        "dataType": "string",
+        "value1": "={{ $json.action }}",
+        "rules": {
+          "rules": [
+            { "value2": "post" },
+            { "value2": "regenerate" },
+            { "value2": "cancel" }
+          ]
+        },
+        "fallbackOutput": "extra"
+      },
+      "id": "route-action",
+      "name": "Route Action",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 1,
+      "position": [1980, 520]
+    },
+    {
+      "parameters": {
+        "jsCode": "const d = $input.first().json;\nconst staticData = $getWorkflowStaticData('global');\nstaticData.drafts = staticData.drafts || {};\nstaticData.drafts[d.draftId] = { idea: d.idea, post: d.post, status: 'posting', createdAt: d.createdAt, updatedAt: new Date().toISOString() };\nreturn [{ json: d }];"
+      },
+      "id": "mark-posting",
+      "name": "Mark as Posting",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2200, 420]
+    },
+    {
+      "parameters": {
+        "resource": "share",
+        "text": "={{ $json.post }}",
+        "additionalFields": {}
+      },
+      "id": "linkedin-post",
+      "name": "LinkedIn Post",
+      "type": "n8n-nodes-base.linkedIn",
+      "typeVersion": 1,
+      "position": [2420, 420],
+      "credentials": {
+        "linkedInOAuth2Api": { "id": "LINKEDIN_CREDENTIAL_ID", "name": "LinkedIn OAuth2 API" }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const d = $('Mark as Posting').first().json;\nconst staticData = $getWorkflowStaticData('global');\nstaticData.drafts = staticData.drafts || {};\nstaticData.drafts[d.draftId] = { idea: d.idea, post: d.post, status: 'pending', createdAt: d.createdAt, updatedAt: new Date().toISOString() };\nreturn [{ json: d }];"
+      },
+      "id": "revert-pending",
+      "name": "Revert to Pending",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2640, 320]
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $json.chatId }}",
+        "text": "LinkedIn failed. Draft restored — you can try again or cancel.",
+        "additionalFields": {}
+      },
+      "id": "linkedin-failed-msg",
+      "name": "LinkedIn Failed Message",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1,
+      "position": [2860, 320],
+      "credentials": {
+        "telegramApi": { "id": "TELEGRAM_CREDENTIAL_ID", "name": "Telegram Bot" }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const d = $('Mark as Posting').first().json;\nconst staticData = $getWorkflowStaticData('global');\nstaticData.drafts = staticData.drafts || {};\nstaticData.drafts[d.draftId] = { idea: d.idea, post: d.post, status: 'posted', createdAt: d.createdAt, updatedAt: new Date().toISOString() };\nreturn [{ json: d }];"
+      },
+      "id": "mark-posted",
+      "name": "Mark as Posted",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2640, 520]
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $json.chatId }}",
+        "text": "✅ Posted to LinkedIn!",
+        "additionalFields": {}
+      },
+      "id": "posted-msg",
+      "name": "Posted Confirmation",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1,
+      "position": [2860, 520],
+      "credentials": {
+        "telegramApi": { "id": "TELEGRAM_CREDENTIAL_ID", "name": "Telegram Bot" }
+      }
+    },
+    {
+      "parameters": {
+        "command": "=Different angle on this idea: {{ $json.idea }}",
+        "options": {}
+      },
+      "id": "ssh-regen",
+      "name": "SSH Regenerate Post",
+      "type": "n8n-nodes-base.ssh",
+      "typeVersion": 1,
+      "position": [2200, 620],
+      "credentials": {
+        "sshPassword": { "id": "SSH_CREDENTIAL_ID", "name": "Mac SSH" }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $json.chatId }}",
+        "text": "Could not reach Claude. Original draft still active.",
+        "additionalFields": {}
+      },
+      "id": "ssh-regen-error-msg",
+      "name": "SSH Regen Error",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1,
+      "position": [2420, 520],
+      "credentials": {
+        "telegramApi": { "id": "TELEGRAM_CREDENTIAL_ID", "name": "Telegram Bot" }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "number": [
+            {
+              "value1": "={{ $json.stdout?.trim().length ?? 0 }}",
+              "operation": "larger",
+              "value2": 0
+            }
+          ]
+        }
+      },
+      "id": "check-regen-output",
+      "name": "Check Regen Output",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [2420, 660]
+    },
+    {
+      "parameters": {
+        "jsCode": "const old = $('Route Action').first().json;\nconst newDraftId = Date.now().toString(36) + Math.random().toString(36).substring(2, 5);\nconst post = $input.first().json.stdout.trim();\nconst staticData = $getWorkflowStaticData('global');\nstaticData.drafts = staticData.drafts || {};\nstaticData.drafts[newDraftId] = { idea: old.idea, post, status: 'pending', createdAt: new Date().toISOString() };\nif (staticData.drafts[old.draftId]) {\n  staticData.drafts[old.draftId] = { ...staticData.drafts[old.draftId], status: 'superseded', updatedAt: new Date().toISOString() };\n}\nreturn [{ json: { ...old, post, newDraftId } }];"
+      },
+      "id": "build-new-draft",
+      "name": "Build New Draft",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2640, 700]
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $json.chatId }}",
+        "text": "=Here's a new version:\n\n{{ $json.post }}\n\n─────────────────\nWhat would you like to do?",
+        "additionalFields": {
+          "replyMarkup": "inlineKeyboard",
+          "inlineKeyboard": {
+            "rows": [
+              {
+                "row": {
+                  "buttons": [
+                    {
+                      "text": "✅ Post to LinkedIn",
+                      "additionalFields": {
+                        "callbackData": "=post:{{ $json.newDraftId }}"
+                      }
+                    },
+                    {
+                      "text": "🔄 Regenerate",
+                      "additionalFields": {
+                        "callbackData": "=regenerate:{{ $json.newDraftId }}"
+                      }
+                    },
+                    {
+                      "text": "❌ Cancel",
+                      "additionalFields": {
+                        "callbackData": "=cancel:{{ $json.newDraftId }}"
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      },
+      "id": "send-regen-draft",
+      "name": "Send Regen Draft",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1,
+      "position": [2860, 700],
+      "credentials": {
+        "telegramApi": { "id": "TELEGRAM_CREDENTIAL_ID", "name": "Telegram Bot" }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const d = $input.first().json;\nconst staticData = $getWorkflowStaticData('global');\nstaticData.drafts = staticData.drafts || {};\nstaticData.drafts[d.draftId] = { idea: d.idea, post: d.post, status: 'cancelled', createdAt: d.createdAt, updatedAt: new Date().toISOString() };\nreturn [{ json: d }];"
+      },
+      "id": "mark-cancelled",
+      "name": "Mark as Cancelled",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2200, 820]
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $json.chatId }}",
+        "text": "❌ Cancelled. No post was published.",
+        "additionalFields": {}
+      },
+      "id": "cancelled-msg",
+      "name": "Cancelled Message",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1,
+      "position": [2420, 820],
+      "credentials": {
+        "telegramApi": { "id": "TELEGRAM_CREDENTIAL_ID", "name": "Telegram Bot" }
+      }
+    }
+  ],
+  "connections": {
+    "Telegram Trigger": { "main": [[{ "node": "Auth Gate", "type": "main", "index": 0 }]] },
+    "Auth Gate": {
+      "main": [
+        [{ "node": "Message or Callback?", "type": "main", "index": 0 }],
+        [{ "node": "Send Unauthorized", "type": "main", "index": 0 }]
+      ]
+    },
+    "Message or Callback?": {
+      "main": [
+        [{ "node": "Text Only Guard", "type": "main", "index": 0 }],
+        [{ "node": "Parse Callback", "type": "main", "index": 0 }]
+      ]
+    },
+    "Text Only Guard": {
+      "main": [
+        [{ "node": "Extract Idea", "type": "main", "index": 0 }],
+        [{ "node": "Not Text Message", "type": "main", "index": 0 }]
+      ]
+    },
+    "Extract Idea": { "main": [[{ "node": "SSH Generate Post", "type": "main", "index": 0 }]] },
+    "SSH Generate Post": {
+      "main": [
+        [{ "node": "Check Claude Output", "type": "main", "index": 0 }],
+        [{ "node": "SSH Error Message", "type": "main", "index": 0 }]
+      ]
+    },
+    "Check Claude Output": {
+      "main": [
+        [{ "node": "Save Draft", "type": "main", "index": 0 }],
+        [{ "node": "Empty Output Message", "type": "main", "index": 0 }]
+      ]
+    },
+    "Save Draft": { "main": [[{ "node": "Send Draft + Buttons", "type": "main", "index": 0 }]] },
+    "Parse Callback": { "main": [[{ "node": "Answer Callback", "type": "main", "index": 0 }]] },
+    "Answer Callback": { "main": [[{ "node": "Restore Callback Data", "type": "main", "index": 0 }]] },
+    "Restore Callback Data": { "main": [[{ "node": "Malformed Guard", "type": "main", "index": 0 }]] },
+    "Malformed Guard": {
+      "main": [
+        [{ "node": "Load Draft", "type": "main", "index": 0 }],
+        [{ "node": "Malformed Message", "type": "main", "index": 0 }]
+      ]
+    },
+    "Load Draft": { "main": [[{ "node": "Draft Found Guard", "type": "main", "index": 0 }]] },
+    "Draft Found Guard": {
+      "main": [
+        [{ "node": "Status Guard", "type": "main", "index": 0 }],
+        [{ "node": "No Draft Message", "type": "main", "index": 0 }]
+      ]
+    },
+    "Status Guard": {
+      "main": [
+        [{ "node": "Route Action", "type": "main", "index": 0 }],
+        [{ "node": "Not Pending Message", "type": "main", "index": 0 }]
+      ]
+    },
+    "Route Action": {
+      "main": [
+        [{ "node": "Mark as Posting", "type": "main", "index": 0 }],
+        [{ "node": "SSH Regenerate Post", "type": "main", "index": 0 }],
+        [{ "node": "Mark as Cancelled", "type": "main", "index": 0 }]
+      ]
+    },
+    "Mark as Posting": { "main": [[{ "node": "LinkedIn Post", "type": "main", "index": 0 }]] },
+    "LinkedIn Post": {
+      "main": [
+        [{ "node": "Mark as Posted", "type": "main", "index": 0 }],
+        [{ "node": "Revert to Pending", "type": "main", "index": 0 }]
+      ]
+    },
+    "Revert to Pending": { "main": [[{ "node": "LinkedIn Failed Message", "type": "main", "index": 0 }]] },
+    "Mark as Posted": { "main": [[{ "node": "Posted Confirmation", "type": "main", "index": 0 }]] },
+    "SSH Regenerate Post": {
+      "main": [
+        [{ "node": "Check Regen Output", "type": "main", "index": 0 }],
+        [{ "node": "SSH Regen Error", "type": "main", "index": 0 }]
+      ]
+    },
+    "Check Regen Output": {
+      "main": [
+        [{ "node": "Build New Draft", "type": "main", "index": 0 }],
+        [{ "node": "SSH Regen Error", "type": "main", "index": 0 }]
+      ]
+    },
+    "Build New Draft": { "main": [[{ "node": "Send Regen Draft", "type": "main", "index": 0 }]] },
+    "Mark as Cancelled": { "main": [[{ "node": "Cancelled Message", "type": "main", "index": 0 }]] }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "tags": [],
+  "pinData": {}
+}

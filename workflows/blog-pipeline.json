@@ -1,0 +1,1281 @@
+{
+  "name": "Blog Pipeline",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "GET",
+        "path": "blog-pipeline",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-get",
+      "name": "GET: Blog Form",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [0, 300],
+      "webhookId": "blog-pipeline-get"
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "blog-pipeline",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-post",
+      "name": "POST: Actions",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [0, 500],
+      "webhookId": "blog-pipeline-post"
+    },
+    {
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "<!DOCTYPE html><html><head><meta charset=\"UTF-8\"><title>Blog Pipeline</title><style>*{box-sizing:border-box}body{font-family:system-ui,sans-serif;max-width:640px;margin:80px auto;padding:0 24px;background:#f9fafb;color:#111}h1{font-size:1.5rem;margin-bottom:6px}p{color:#555;margin-bottom:20px}textarea{width:100%;height:130px;padding:12px;font-size:1rem;border:1px solid #d1d5db;border-radius:8px;resize:vertical;font-family:inherit}button{margin-top:14px;padding:12px 28px;background:#2563eb;color:#fff;border:none;border-radius:8px;font-size:1rem;cursor:pointer;font-weight:600}button:hover{background:#1d4ed8}</style></head><body><h1>📝 Blog Pipeline</h1><p>Enter your blog idea — Claude will generate a draft for review before publishing to Medium, LinkedIn, and Twitter/X.</p><form method=\"POST\" action=\"/webhook/blog-pipeline\"><input type=\"hidden\" name=\"action\" value=\"new\"><textarea name=\"idea\" placeholder=\"e.g. Why most developers overlook observability until it's too late\" required></textarea><br><button type=\"submit\">Generate Blog Draft →</button></form></body></html>",
+        "options": {
+          "responseHeaders": {
+            "entries": [
+              {"name": "Content-Type", "value": "text/html; charset=utf-8"}
+            ]
+          }
+        }
+      },
+      "id": "respond-form",
+      "name": "Respond: Idea Form",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [220, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const body = $input.first().json.body || {};\nconst action = body.action || '';\nconst draftId = body.draftId || '';\nconst idea = (body.idea || '').trim();\nconst platform = (body.platform || '').trim();\nconst confirmed = body.confirmed;\nconst mediumUrlInput = (body.mediumUrl || '').trim();\nconst staticData = $getWorkflowStaticData('global');\nconst draft = (staticData.drafts || {})[draftId] || null;\nreturn [{ json: { action, draftId, draft, idea, platform, confirmed, mediumUrlInput } }];"
+      },
+      "id": "parse-request",
+      "name": "Parse Request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [220, 500]
+    },
+    {
+      "parameters": {
+        "dataType": "string",
+        "value1": "={{ $json.action }}",
+        "rules": {
+          "rules": [
+            {"value2": "new"},
+            {"value2": "approve_blog"},
+            {"value2": "regenerate_blog"},
+            {"value2": "retry_linkedin_gen"},
+            {"value2": "approve_linkedin"},
+            {"value2": "regenerate_linkedin"},
+            {"value2": "retry_tweet_gen"},
+            {"value2": "approve_tweet"},
+            {"value2": "regenerate_tweet"},
+            {"value2": "cancel"},
+            {"value2": "confirm_publish"}
+          ]
+        },
+        "fallbackOutput": "extra"
+      },
+      "id": "route-action",
+      "name": "Route Action",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 1,
+      "position": [440, 500]
+    },
+
+    {
+      "parameters": {
+        "conditions": {
+          "number": [{"value1": "={{ $json.idea.length }}", "operation": "larger", "value2": 0}]
+        }
+      },
+      "id": "guard-blank-idea",
+      "name": "Guard: Blank Idea",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [660, 200]
+    },
+    {
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "<!DOCTYPE html><html><head><meta charset=\"UTF-8\"><title>Error</title><style>body{font-family:system-ui,sans-serif;max-width:600px;margin:80px auto;padding:0 24px}a{color:#2563eb}</style></head><body><h2>Please enter an idea.</h2><p><a href=\"/webhook/blog-pipeline\">← Go back</a></p></body></html>",
+        "options": {"responseHeaders": {"entries": [{"name": "Content-Type", "value": "text/html; charset=utf-8"}]}}
+      },
+      "id": "respond-blank-idea",
+      "name": "Respond: Blank Idea Error",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [880, 120]
+    },
+    {
+      "parameters": {
+        "command": "=blog:{{ Buffer.from($json.idea).toString('base64') }}",
+        "options": {}
+      },
+      "id": "ssh-generate-blog",
+      "name": "SSH: Generate Blog",
+      "type": "n8n-nodes-base.ssh",
+      "typeVersion": 1,
+      "position": [880, 280],
+      "onError": "continueErrorOutput",
+      "credentials": {"sshPassword": {"id": "BLOG_SSH_CREDENTIAL_ID", "name": "Blog SSH"}}
+    },
+    {
+      "parameters": {
+        "jsCode": "const idea = $('Parse Request').first().json.idea;\nconst esc = s => String(s).replace(/&/g,'&amp;').replace(/\"/g,'&quot;').replace(/'/g,'&#39;').replace(/</g,'&lt;').replace(/>/g,'&gt;');\nreturn [{ json: { errorHtml: `<!DOCTYPE html><html><head><meta charset=\"UTF-8\"><title>Error</title><style>body{font-family:system-ui,sans-serif;max-width:600px;margin:80px auto;padding:0 24px}button{padding:10px 20px;background:#2563eb;color:#fff;border:none;border-radius:6px;cursor:pointer}</style></head><body><h2>⚠️ Blog generation failed</h2><p>Claude could not be reached or returned an empty response. Please try again.</p><form method=\"POST\" action=\"/webhook/blog-pipeline\"><input type=\"hidden\" name=\"action\" value=\"new\"><input type=\"hidden\" name=\"idea\" value=\"${esc(idea)}\"><button type=\"submit\">🔄 Retry</button></form><p><a href=\"/webhook/blog-pipeline\">← Start over</a></p></body></html>` } }];"
+      },
+      "id": "blog-error-html",
+      "name": "Build Blog Error HTML",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1100, 160]
+    },
+    {
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "={{ $json.errorHtml }}",
+        "options": {"responseHeaders": {"entries": [{"name": "Content-Type", "value": "text/html; charset=utf-8"}]}}
+      },
+      "id": "respond-blog-error",
+      "name": "Respond: Blog Error",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [1320, 160]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "number": [{"value1": "={{ ($json.stdout || '').trim().length }}", "operation": "larger", "value2": 0}]
+        }
+      },
+      "id": "guard-blog-output",
+      "name": "Guard: Blog Output",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [1100, 320]
+    },
+    {
+      "parameters": {
+        "jsCode": "const raw = $input.first().json.stdout.trim();\nconst titleMatch = raw.match(/^TITLE:\\s*(.+)/m);\nconst title = titleMatch ? titleMatch[1].trim() : 'Untitled';\nconst contentMatch = raw.match(/---\\n([\\s\\S]+)/);\nconst content = contentMatch ? contentMatch[1].trim() : raw;\nconst idea = $('Parse Request').first().json.idea;\nconst draftId = Date.now().toString(36) + Math.random().toString(36).substring(2, 5);\nconst staticData = $getWorkflowStaticData('global');\nstaticData.drafts = staticData.drafts || {};\nstaticData.drafts[draftId] = { idea, title, blogContent: content, stage: 'blog_review', createdAt: new Date().toISOString() };\nreturn [{ json: { idea, title, blogContent: content, draftId } }];"
+      },
+      "id": "parse-save-blog",
+      "name": "Parse + Save Blog",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1320, 360]
+    },
+    {
+      "parameters": {
+        "jsCode": "const d = $input.first().json;\nconst esc = s => String(s).replace(/&/g,'&amp;').replace(/\"/g,'&quot;').replace(/'/g,'&#39;').replace(/</g,'&lt;').replace(/>/g,'&gt;');\nconst contentEsc = esc(d.blogContent);\nconst ideaEsc = esc(d.idea);\nconst titleEsc = esc(d.title);\nconst draftIdEsc = esc(d.draftId);\nreturn [{ json: { html: `<!DOCTYPE html><html><head><meta charset=\"UTF-8\"><title>Blog Review</title><style>*{box-sizing:border-box}body{font-family:system-ui,sans-serif;max-width:860px;margin:40px auto;padding:0 24px;background:#f9fafb}h1{font-size:1.3rem;margin-bottom:4px}.meta{color:#6b7280;font-size:.85rem;margin-bottom:16px}.content{background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:20px;white-space:pre-wrap;font-size:.95rem;line-height:1.75;max-height:62vh;overflow-y:auto}.actions{display:flex;gap:10px;margin-top:18px;flex-wrap:wrap}form{margin:0}button{padding:10px 20px;border:none;border-radius:7px;font-size:.93rem;cursor:pointer;font-weight:600}.approve{background:#16a34a;color:#fff}.regen{background:#2563eb;color:#fff}.cancel{background:#dc2626;color:#fff}</style></head><body><h1>📝 Blog Draft</h1><div class=\"meta\">Idea: ${ideaEsc} &nbsp;·&nbsp; Draft: ${draftIdEsc}</div><div class=\"content\"><strong>${titleEsc}</strong>\\n\\n${contentEsc}</div><div class=\"actions\"><form method=\"POST\" action=\"/webhook/blog-pipeline\"><input type=\"hidden\" name=\"action\" value=\"approve_blog\"><input type=\"hidden\" name=\"draftId\" value=\"${draftIdEsc}\"><button type=\"submit\" class=\"approve\">✅ Approve → Post to Medium</button></form><form method=\"POST\" action=\"/webhook/blog-pipeline\"><input type=\"hidden\" name=\"action\" value=\"regenerate_blog\"><input type=\"hidden\" name=\"draftId\" value=\"${draftIdEsc}\"><button type=\"submit\" class=\"regen\">🔄 Regenerate</button></form><form method=\"POST\" action=\"/webhook/blog-pipeline\"><input type=\"hidden\" name=\"action\" value=\"cancel\"><input type=\"hidden\" name=\"draftId\" value=\"${draftIdEsc}\"><button type=\"submit\" class=\"cancel\">❌ Cancel</button></form></div></body></html>` } }];"
+      },
+      "id": "build-blog-review-html",
+      "name": "Build Blog Review HTML",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1540, 360]
+    },
+    {
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "={{ $json.html }}",
+        "options": {"responseHeaders": {"entries": [{"name": "Content-Type", "value": "text/html; charset=utf-8"}]}}
+      },
+      "id": "respond-blog-review",
+      "name": "Respond: Blog Review",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [1760, 360]
+    },
+
+    {
+      "parameters": {
+        "jsCode": "const d = $input.first().json;\nif (!d.draft) {\n  return [{ json: { error: 'Draft not found. Start a new idea.', draftId: d.draftId } }];\n}\nif (d.draft.stage !== 'blog_review') {\n  return [{ json: { error: `Draft already processed (stage: ${d.draft.stage}).`, draftId: d.draftId } }];\n}\nreturn [{ json: { ok: true, ...d } }];"
+      },
+      "id": "guard-approve-blog",
+      "name": "Guard: approve_blog",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [660, 480]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [{"value1": "={{ $json.ok }}", "value2": true}]
+        }
+      },
+      "id": "guard-approve-blog-if",
+      "name": "Guard: approve_blog IF",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [880, 480]
+    },
+    {
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "=<!DOCTYPE html><html><head><meta charset=\"UTF-8\"><title>Error</title><style>body{font-family:system-ui,sans-serif;max-width:600px;margin:80px auto;padding:0 24px}a{color:#2563eb}</style></head><body><h2>⚠️ Cannot process</h2><p>{{ $json.error }}</p><p><a href=\"/webhook/blog-pipeline\">← Start a new idea</a></p></body></html>",
+        "options": {"responseHeaders": {"entries": [{"name": "Content-Type", "value": "text/html; charset=utf-8"}]}}
+      },
+      "id": "respond-guard-error",
+      "name": "Respond: Guard Error",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [1100, 420]
+    },
+    {
+      "parameters": {
+        "jsCode": "const d = $input.first().json;\nconst staticData = $getWorkflowStaticData('global');\nstaticData.drafts = staticData.drafts || {};\nstaticData.drafts[d.draftId] = { ...d.draft, stage: 'publishing_medium', updatedAt: new Date().toISOString() };\nreturn [{ json: d }];"
+      },
+      "id": "set-stage-publishing-medium",
+      "name": "Set Stage: publishing_medium",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1100, 540]
+    },
+    {
+      "parameters": {
+        "resource": "post",
+        "operation": "create",
+        "title": "={{ $json.draft.title }}",
+        "contentFormat": "markdown",
+        "content": "={{ $json.draft.blogContent }}",
+        "additionalFields": {
+          "publishStatus": "public"
+        }
+      },
+      "id": "medium-publish",
+      "name": "Medium: Publish Post",
+      "type": "n8n-nodes-base.medium",
+      "typeVersion": 1,
+      "position": [1320, 540],
+      "onError": "continueErrorOutput",
+      "credentials": {"mediumApi": {"id": "MEDIUM_CREDENTIAL_ID", "name": "Medium"}}
+    },
+    {
+      "parameters": {
+        "jsCode": "const d = $('Parse Request').first().json;\nconst esc = s => String(s).replace(/&/g,'&amp;').replace(/\"/g,'&quot;').replace(/'/g,'&#39;').replace(/</g,'&lt;').replace(/>/g,'&gt;');\nreturn [{ json: { html: `<!DOCTYPE html><html><head><meta charset=\"UTF-8\"><title>Manual Check Required</title><style>body{font-family:system-ui,sans-serif;max-width:640px;margin:80px auto;padding:0 24px}input[type=text]{width:100%;padding:10px;border:1px solid #d1d5db;border-radius:6px;font-size:.95rem;margin:8px 0 16px}.btn-yes{background:#16a34a;color:#fff;padding:10px 20px;border:none;border-radius:6px;cursor:pointer;font-weight:600}.btn-no{background:#dc2626;color:#fff;padding:10px 20px;border:none;border-radius:6px;cursor:pointer;font-weight:600}</style></head><body><h2>⚠️ Manual Check Required</h2><p>We couldn't confirm whether Medium published the post. Please check your Medium profile.</p><p>If it published, paste the article URL below and click Yes to continue.</p><form method=\"POST\" action=\"/webhook/blog-pipeline\"><input type=\"hidden\" name=\"action\" value=\"confirm_publish\"><input type=\"hidden\" name=\"platform\" value=\"medium\"><input type=\"hidden\" name=\"confirmed\" value=\"true\"><input type=\"hidden\" name=\"draftId\" value=\"${esc(d.draftId)}\"><label><strong>Medium article URL:</strong></label><input type=\"text\" name=\"mediumUrl\" placeholder=\"https://medium.com/@you/your-article\" required><button type=\"submit\" class=\"btn-yes\">✅ Yes it published — continue</button></form><br><form method=\"POST\" action=\"/webhook/blog-pipeline\"><input type=\"hidden\" name=\"action\" value=\"confirm_publish\"><input type=\"hidden\" name=\"platform\" value=\"medium\"><input type=\"hidden\" name=\"confirmed\" value=\"false\"><input type=\"hidden\" name=\"draftId\" value=\"${esc(d.draftId)}\"><button type=\"submit\" class=\"btn-no\">❌ It didn't publish — revert to review</button></form></body></html>` } }];"
+      },
+      "id": "build-medium-manual-check",
+      "name": "Build Medium Manual Check HTML",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1540, 460]
+    },
+    {
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "={{ $json.html }}",
+        "options": {"responseHeaders": {"entries": [{"name": "Content-Type", "value": "text/html; charset=utf-8"}]}}
+      },
+      "id": "respond-medium-manual-check",
+      "name": "Respond: Medium Manual Check",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [1760, 460]
+    },
+    {
+      "parameters": {
+        "jsCode": "const d = $('Parse Request').first().json;\nconst mediumUrl = $('Medium: Publish Post').first().json.url;\nconst staticData = $getWorkflowStaticData('global');\nstaticData.drafts[d.draftId] = { ...d.draft, mediumUrl, stage: 'medium_published', updatedAt: new Date().toISOString() };\nreturn [{ json: { ...d, mediumUrl, draft: { ...d.draft, mediumUrl } } }];"
+      },
+      "id": "set-stage-medium-published",
+      "name": "Set Stage: medium_published",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1540, 600]
+    },
+    {
+      "parameters": {
+        "command": "=linkedin:{{ Buffer.from($json.draft.idea).toString('base64') }}|{{ $json.mediumUrl }}",
+        "options": {}
+      },
+      "id": "ssh-gen-linkedin",
+      "name": "SSH: Generate LinkedIn",
+      "type": "n8n-nodes-base.ssh",
+      "typeVersion": 1,
+      "position": [1760, 600],
+      "onError": "continueErrorOutput",
+      "credentials": {"sshPassword": {"id": "BLOG_SSH_CREDENTIAL_ID", "name": "Blog SSH"}}
+    },
+    {
+      "parameters": {
+        "jsCode": "const d = $('Parse Request').first().json;\nconst mediumUrl = $('Set Stage: medium_published').first().json.mediumUrl;\nconst esc = s => String(s).replace(/&/g,'&amp;').replace(/\"/g,'&quot;').replace(/'/g,'&#39;').replace(/</g,'&lt;').replace(/>/g,'&gt;');\nreturn [{ json: { html: `<!DOCTYPE html><html><head><meta charset=\"UTF-8\"><title>Error</title><style>body{font-family:system-ui,sans-serif;max-width:640px;margin:80px auto;padding:0 24px}button{padding:10px 20px;background:#2563eb;color:#fff;border:none;border-radius:6px;cursor:pointer;font-weight:600}</style></head><body><h2>⚠️ LinkedIn Generation Failed</h2><p>Medium published at <a href=\"${esc(mediumUrl)}\">${esc(mediumUrl)}</a></p><p>Could not generate LinkedIn post. Click retry to try again.</p><form method=\"POST\" action=\"/webhook/blog-pipeline\"><input type=\"hidden\" name=\"action\" value=\"retry_linkedin_gen\"><input type=\"hidden\" name=\"draftId\" value=\"${esc(d.draftId)}\"><button type=\"submit\">🔄 Retry LinkedIn Generation</button></form></body></html>` } }];"
+      },
+      "id": "build-linkedin-retry-html",
+      "name": "Build LinkedIn Retry HTML",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1980, 520]
+    },
+    {
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "={{ $json.html }}",
+        "options": {"responseHeaders": {"entries": [{"name": "Content-Type", "value": "text/html; charset=utf-8"}]}}
+      },
+      "id": "respond-linkedin-retry",
+      "name": "Respond: LinkedIn Retry",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [2200, 520]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "number": [{"value1": "={{ ($json.stdout || '').trim().length }}", "operation": "larger", "value2": 0}]
+        }
+      },
+      "id": "guard-linkedin-output",
+      "name": "Guard: LinkedIn Output",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [1980, 660]
+    },
+    {
+      "parameters": {
+        "jsCode": "const d = $('Parse Request').first().json;\nconst mediumUrl = $('Set Stage: medium_published').first().json.mediumUrl;\nconst linkedinPost = $input.first().json.stdout.trim();\nconst newDraftId = Date.now().toString(36) + Math.random().toString(36).substring(2, 5);\nconst staticData = $getWorkflowStaticData('global');\nstaticData.drafts[d.draftId] = { ...d.draft, stage: 'superseded', updatedAt: new Date().toISOString() };\nstaticData.drafts[newDraftId] = { ...d.draft, mediumUrl, linkedinPost, stage: 'linkedin_review', createdAt: new Date().toISOString() };\nreturn [{ json: { ...d.draft, draftId: newDraftId, mediumUrl, linkedinPost } }];"
+      },
+      "id": "save-linkedin-draft",
+      "name": "Save LinkedIn Draft",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2200, 700]
+    },
+    {
+      "parameters": {
+        "jsCode": "const d = $input.first().json;\nconst esc = s => String(s).replace(/&/g,'&amp;').replace(/\"/g,'&quot;').replace(/'/g,'&#39;').replace(/</g,'&lt;').replace(/>/g,'&gt;');\nconst contentEsc = esc(d.linkedinPost);\nconst ideaEsc = esc(d.idea);\nconst draftIdEsc = esc(d.draftId);\nconst mediumEsc = esc(d.mediumUrl);\nreturn [{ json: { html: `<!DOCTYPE html><html><head><meta charset=\"UTF-8\"><title>LinkedIn Review</title><style>*{box-sizing:border-box}body{font-family:system-ui,sans-serif;max-width:860px;margin:40px auto;padding:0 24px;background:#f9fafb}h1{font-size:1.3rem;margin-bottom:4px}.meta{color:#6b7280;font-size:.85rem;margin-bottom:16px}.content{background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:20px;white-space:pre-wrap;font-size:.95rem;line-height:1.75;max-height:62vh;overflow-y:auto}.actions{display:flex;gap:10px;margin-top:18px;flex-wrap:wrap}form{margin:0}button{padding:10px 20px;border:none;border-radius:7px;font-size:.93rem;cursor:pointer;font-weight:600}.approve{background:#16a34a;color:#fff}.regen{background:#2563eb;color:#fff}.cancel{background:#dc2626;color:#fff}</style></head><body><h1>💼 LinkedIn Post Draft</h1><div class=\"meta\">Medium: <a href=\"${mediumEsc}\">${mediumEsc}</a> &nbsp;·&nbsp; Draft: ${draftIdEsc}</div><div class=\"content\">${contentEsc}</div><div class=\"actions\"><form method=\"POST\" action=\"/webhook/blog-pipeline\"><input type=\"hidden\" name=\"action\" value=\"approve_linkedin\"><input type=\"hidden\" name=\"draftId\" value=\"${draftIdEsc}\"><button type=\"submit\" class=\"approve\">✅ Post to LinkedIn</button></form><form method=\"POST\" action=\"/webhook/blog-pipeline\"><input type=\"hidden\" name=\"action\" value=\"regenerate_linkedin\"><input type=\"hidden\" name=\"draftId\" value=\"${draftIdEsc}\"><button type=\"submit\" class=\"regen\">🔄 Regenerate</button></form><form method=\"POST\" action=\"/webhook/blog-pipeline\"><input type=\"hidden\" name=\"action\" value=\"cancel\"><input type=\"hidden\" name=\"draftId\" value=\"${draftIdEsc}\"><button type=\"submit\" class=\"cancel\">❌ Cancel</button></form></div></body></html>` } }];"
+      },
+      "id": "build-linkedin-review-html",
+      "name": "Build LinkedIn Review HTML",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2420, 700]
+    },
+    {
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "={{ $json.html }}",
+        "options": {"responseHeaders": {"entries": [{"name": "Content-Type", "value": "text/html; charset=utf-8"}]}}
+      },
+      "id": "respond-linkedin-review",
+      "name": "Respond: LinkedIn Review",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [2640, 700]
+    },
+
+    {
+      "parameters": {
+        "jsCode": "const d = $input.first().json;\nif (!d.draft) return [{ json: { error: 'Draft not found.', draftId: d.draftId } }];\nif (d.draft.stage !== 'blog_review') return [{ json: { error: `Cannot regenerate: draft is at stage '${d.draft.stage}'.`, draftId: d.draftId } }];\nreturn [{ json: { ok: true, ...d } }];"
+      },
+      "id": "guard-regen-blog",
+      "name": "Guard: regenerate_blog",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [660, 640]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [{"value1": "={{ $json.ok }}", "value2": true}]
+        }
+      },
+      "id": "guard-regen-blog-if",
+      "name": "Guard: regen_blog IF",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [880, 640]
+    },
+    {
+      "parameters": {
+        "command": "=blog:{{ Buffer.from($json.draft.idea).toString('base64') }}",
+        "options": {}
+      },
+      "id": "ssh-regen-blog",
+      "name": "SSH: Regenerate Blog",
+      "type": "n8n-nodes-base.ssh",
+      "typeVersion": 1,
+      "position": [1100, 680],
+      "onError": "continueErrorOutput",
+      "credentials": {"sshPassword": {"id": "BLOG_SSH_CREDENTIAL_ID", "name": "Blog SSH"}}
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "number": [{"value1": "={{ ($json.stdout || '').trim().length }}", "operation": "larger", "value2": 0}]
+        }
+      },
+      "id": "guard-regen-blog-output",
+      "name": "Guard: Regen Blog Output",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [1320, 680]
+    },
+    {
+      "parameters": {
+        "jsCode": "const d = $('Parse Request').first().json;\nconst raw = $input.first().json.stdout.trim();\nconst titleMatch = raw.match(/^TITLE:\\s*(.+)/m);\nconst title = titleMatch ? titleMatch[1].trim() : 'Untitled';\nconst contentMatch = raw.match(/---\\n([\\s\\S]+)/);\nconst content = contentMatch ? contentMatch[1].trim() : raw;\nconst newDraftId = Date.now().toString(36) + Math.random().toString(36).substring(2, 5);\nconst staticData = $getWorkflowStaticData('global');\nstaticData.drafts[d.draftId] = { ...d.draft, stage: 'superseded', updatedAt: new Date().toISOString() };\nstaticData.drafts[newDraftId] = { idea: d.draft.idea, title, blogContent: content, stage: 'blog_review', createdAt: new Date().toISOString() };\nreturn [{ json: { idea: d.draft.idea, title, blogContent: content, draftId: newDraftId } }];"
+      },
+      "id": "save-regen-blog",
+      "name": "Save Regen Blog",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1540, 720]
+    },
+
+    {
+      "parameters": {
+        "jsCode": "const d = $input.first().json;\nif (!d.draft) return [{ json: { error: 'Draft not found.', draftId: d.draftId } }];\nif (d.draft.stage !== 'medium_published') return [{ json: { error: `Cannot retry LinkedIn gen: draft is at stage '${d.draft.stage}'.`, draftId: d.draftId } }];\nreturn [{ json: { ok: true, ...d } }];"
+      },
+      "id": "guard-retry-linkedin",
+      "name": "Guard: retry_linkedin_gen",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [660, 800]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [{"value1": "={{ $json.ok }}", "value2": true}]
+        }
+      },
+      "id": "guard-retry-linkedin-if",
+      "name": "Guard: retry_linkedin IF",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [880, 800]
+    },
+    {
+      "parameters": {
+        "command": "=linkedin:{{ Buffer.from($json.draft.idea).toString('base64') }}|{{ $json.draft.mediumUrl }}",
+        "options": {}
+      },
+      "id": "ssh-retry-linkedin",
+      "name": "SSH: Retry LinkedIn Gen",
+      "type": "n8n-nodes-base.ssh",
+      "typeVersion": 1,
+      "position": [1100, 840],
+      "onError": "continueErrorOutput",
+      "credentials": {"sshPassword": {"id": "BLOG_SSH_CREDENTIAL_ID", "name": "Blog SSH"}}
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "number": [{"value1": "={{ ($json.stdout || '').trim().length }}", "operation": "larger", "value2": 0}]
+        }
+      },
+      "id": "guard-retry-linkedin-output",
+      "name": "Guard: Retry LinkedIn Output",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [1320, 840]
+    },
+    {
+      "parameters": {
+        "jsCode": "const d = $('Parse Request').first().json;\nconst mediumUrl = d.draft.mediumUrl;\nconst linkedinPost = $input.first().json.stdout.trim();\nconst newDraftId = Date.now().toString(36) + Math.random().toString(36).substring(2, 5);\nconst staticData = $getWorkflowStaticData('global');\nstaticData.drafts[d.draftId] = { ...d.draft, stage: 'superseded', updatedAt: new Date().toISOString() };\nstaticData.drafts[newDraftId] = { ...d.draft, mediumUrl, linkedinPost, stage: 'linkedin_review', createdAt: new Date().toISOString() };\nreturn [{ json: { ...d.draft, draftId: newDraftId, mediumUrl, linkedinPost } }];"
+      },
+      "id": "save-retry-linkedin",
+      "name": "Save Retry LinkedIn Draft",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1540, 880]
+    },
+
+    {
+      "parameters": {
+        "jsCode": "const d = $input.first().json;\nif (!d.draft) return [{ json: { error: 'Draft not found.', draftId: d.draftId } }];\nif (d.draft.stage !== 'linkedin_review') return [{ json: { error: `Cannot post to LinkedIn: draft is at stage '${d.draft.stage}'.`, draftId: d.draftId } }];\nreturn [{ json: { ok: true, ...d } }];"
+      },
+      "id": "guard-approve-linkedin",
+      "name": "Guard: approve_linkedin",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [660, 960]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [{"value1": "={{ $json.ok }}", "value2": true}]
+        }
+      },
+      "id": "guard-approve-linkedin-if",
+      "name": "Guard: approve_linkedin IF",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [880, 960]
+    },
+    {
+      "parameters": {
+        "jsCode": "const d = $input.first().json;\nconst staticData = $getWorkflowStaticData('global');\nstaticData.drafts[d.draftId] = { ...d.draft, stage: 'publishing_linkedin', updatedAt: new Date().toISOString() };\nreturn [{ json: d }];"
+      },
+      "id": "set-stage-publishing-linkedin",
+      "name": "Set Stage: publishing_linkedin",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1100, 1000]
+    },
+    {
+      "parameters": {
+        "resource": "share",
+        "text": "={{ $json.draft.linkedinPost }}"
+      },
+      "id": "linkedin-post",
+      "name": "LinkedIn: Post",
+      "type": "n8n-nodes-base.linkedIn",
+      "typeVersion": 1,
+      "position": [1320, 1000],
+      "onError": "continueErrorOutput",
+      "credentials": {"linkedInOAuth2Api": {"id": "LINKEDIN_CREDENTIAL_ID", "name": "LinkedIn"}}
+    },
+    {
+      "parameters": {
+        "jsCode": "const d = $('Parse Request').first().json;\nconst esc = s => String(s).replace(/&/g,'&amp;').replace(/\"/g,'&quot;').replace(/'/g,'&#39;').replace(/</g,'&lt;').replace(/>/g,'&gt;');\nreturn [{ json: { html: `<!DOCTYPE html><html><head><meta charset=\"UTF-8\"><title>Manual Check Required</title><style>body{font-family:system-ui,sans-serif;max-width:640px;margin:80px auto;padding:0 24px}.btn-yes{background:#16a34a;color:#fff;padding:10px 20px;border:none;border-radius:6px;cursor:pointer;font-weight:600}.btn-no{background:#dc2626;color:#fff;padding:10px 20px;border:none;border-radius:6px;cursor:pointer;font-weight:600}</style></head><body><h2>⚠️ Manual Check Required — LinkedIn</h2><p>We couldn't confirm if the LinkedIn post went through. Please check LinkedIn manually.</p><form method=\"POST\" action=\"/webhook/blog-pipeline\"><input type=\"hidden\" name=\"action\" value=\"confirm_publish\"><input type=\"hidden\" name=\"platform\" value=\"linkedin\"><input type=\"hidden\" name=\"confirmed\" value=\"true\"><input type=\"hidden\" name=\"draftId\" value=\"${esc(d.draftId)}\"><button type=\"submit\" class=\"btn-yes\">✅ Yes it posted — continue to tweet</button></form><br><form method=\"POST\" action=\"/webhook/blog-pipeline\"><input type=\"hidden\" name=\"action\" value=\"confirm_publish\"><input type=\"hidden\" name=\"platform\" value=\"linkedin\"><input type=\"hidden\" name=\"confirmed\" value=\"false\"><input type=\"hidden\" name=\"draftId\" value=\"${esc(d.draftId)}\"><button type=\"submit\" class=\"btn-no\">❌ It didn't post — revert to review</button></form></body></html>` } }];"
+      },
+      "id": "build-linkedin-manual-check",
+      "name": "Build LinkedIn Manual Check HTML",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1540, 920]
+    },
+    {
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "={{ $json.html }}",
+        "options": {"responseHeaders": {"entries": [{"name": "Content-Type", "value": "text/html; charset=utf-8"}]}}
+      },
+      "id": "respond-linkedin-manual-check",
+      "name": "Respond: LinkedIn Manual Check",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [1760, 920]
+    },
+    {
+      "parameters": {
+        "jsCode": "const d = $('Parse Request').first().json;\nconst staticData = $getWorkflowStaticData('global');\nstaticData.drafts[d.draftId] = { ...d.draft, stage: 'linkedin_published', updatedAt: new Date().toISOString() };\nreturn [{ json: { ...d, draft: { ...d.draft } } }];"
+      },
+      "id": "set-stage-linkedin-published",
+      "name": "Set Stage: linkedin_published",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1540, 1060]
+    },
+    {
+      "parameters": {
+        "command": "=tweet:{{ Buffer.from($json.draft.idea).toString('base64') }}|{{ $json.draft.mediumUrl }}",
+        "options": {}
+      },
+      "id": "ssh-gen-tweet",
+      "name": "SSH: Generate Tweet",
+      "type": "n8n-nodes-base.ssh",
+      "typeVersion": 1,
+      "position": [1760, 1060],
+      "onError": "continueErrorOutput",
+      "credentials": {"sshPassword": {"id": "BLOG_SSH_CREDENTIAL_ID", "name": "Blog SSH"}}
+    },
+    {
+      "parameters": {
+        "jsCode": "const d = $('Parse Request').first().json;\nconst mediumUrl = d.draft.mediumUrl;\nconst esc = s => String(s).replace(/&/g,'&amp;').replace(/\"/g,'&quot;').replace(/'/g,'&#39;').replace(/</g,'&lt;').replace(/>/g,'&gt;');\nreturn [{ json: { html: `<!DOCTYPE html><html><head><meta charset=\"UTF-8\"><title>Error</title><style>body{font-family:system-ui,sans-serif;max-width:640px;margin:80px auto;padding:0 24px}button{padding:10px 20px;background:#2563eb;color:#fff;border:none;border-radius:6px;cursor:pointer;font-weight:600}</style></head><body><h2>⚠️ Tweet Generation Failed</h2><p>LinkedIn posted successfully. Could not generate tweet.</p><form method=\"POST\" action=\"/webhook/blog-pipeline\"><input type=\"hidden\" name=\"action\" value=\"retry_tweet_gen\"><input type=\"hidden\" name=\"draftId\" value=\"${esc(d.draftId)}\"><button type=\"submit\">🔄 Retry Tweet Generation</button></form></body></html>` } }];"
+      },
+      "id": "build-tweet-retry-html",
+      "name": "Build Tweet Retry HTML",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1980, 980]
+    },
+    {
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "={{ $json.html }}",
+        "options": {"responseHeaders": {"entries": [{"name": "Content-Type", "value": "text/html; charset=utf-8"}]}}
+      },
+      "id": "respond-tweet-retry",
+      "name": "Respond: Tweet Retry",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [2200, 980]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "number": [{"value1": "={{ ($json.stdout || '').trim().length }}", "operation": "larger", "value2": 0}]
+        }
+      },
+      "id": "guard-tweet-output",
+      "name": "Guard: Tweet Output",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [1980, 1120]
+    },
+    {
+      "parameters": {
+        "jsCode": "const d = $('Parse Request').first().json;\nconst mediumUrl = $('Set Stage: linkedin_published').first().json.draft.mediumUrl;\nconst tweet = $input.first().json.stdout.trim();\nconst newDraftId = Date.now().toString(36) + Math.random().toString(36).substring(2, 5);\nconst staticData = $getWorkflowStaticData('global');\nstaticData.drafts[d.draftId] = { ...d.draft, stage: 'superseded', updatedAt: new Date().toISOString() };\nstaticData.drafts[newDraftId] = { ...d.draft, tweet, stage: 'tweet_review', createdAt: new Date().toISOString() };\nreturn [{ json: { ...d.draft, draftId: newDraftId, tweet } }];"
+      },
+      "id": "save-tweet-draft",
+      "name": "Save Tweet Draft",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2200, 1160]
+    },
+    {
+      "parameters": {
+        "jsCode": "const d = $input.first().json;\nconst esc = s => String(s).replace(/&/g,'&amp;').replace(/\"/g,'&quot;').replace(/'/g,'&#39;').replace(/</g,'&lt;').replace(/>/g,'&gt;');\nconst tweetEsc = esc(d.tweet);\nconst draftIdEsc = esc(d.draftId);\nconst mediumEsc = esc(d.mediumUrl || '');\nreturn [{ json: { html: `<!DOCTYPE html><html><head><meta charset=\"UTF-8\"><title>Tweet Review</title><style>*{box-sizing:border-box}body{font-family:system-ui,sans-serif;max-width:640px;margin:40px auto;padding:0 24px;background:#f9fafb}h1{font-size:1.3rem;margin-bottom:4px}.meta{color:#6b7280;font-size:.85rem;margin-bottom:16px}.content{background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:20px;white-space:pre-wrap;font-size:.95rem;line-height:1.75}.actions{display:flex;gap:10px;margin-top:18px;flex-wrap:wrap}form{margin:0}button{padding:10px 20px;border:none;border-radius:7px;font-size:.93rem;cursor:pointer;font-weight:600}.approve{background:#16a34a;color:#fff}.regen{background:#2563eb;color:#fff}.cancel{background:#dc2626;color:#fff}</style></head><body><h1>🐦 Tweet Draft</h1><div class=\"meta\">Medium: <a href=\"${mediumEsc}\">${mediumEsc}</a> &nbsp;·&nbsp; Draft: ${draftIdEsc}</div><div class=\"content\">${tweetEsc}</div><div class=\"actions\"><form method=\"POST\" action=\"/webhook/blog-pipeline\"><input type=\"hidden\" name=\"action\" value=\"approve_tweet\"><input type=\"hidden\" name=\"draftId\" value=\"${draftIdEsc}\"><button type=\"submit\" class=\"approve\">✅ Post to Twitter/X</button></form><form method=\"POST\" action=\"/webhook/blog-pipeline\"><input type=\"hidden\" name=\"action\" value=\"regenerate_tweet\"><input type=\"hidden\" name=\"draftId\" value=\"${draftIdEsc}\"><button type=\"submit\" class=\"regen\">🔄 Regenerate</button></form><form method=\"POST\" action=\"/webhook/blog-pipeline\"><input type=\"hidden\" name=\"action\" value=\"cancel\"><input type=\"hidden\" name=\"draftId\" value=\"${draftIdEsc}\"><button type=\"submit\" class=\"cancel\">❌ Cancel</button></form></div></body></html>` } }];"
+      },
+      "id": "build-tweet-review-html",
+      "name": "Build Tweet Review HTML",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2420, 1160]
+    },
+    {
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "={{ $json.html }}",
+        "options": {"responseHeaders": {"entries": [{"name": "Content-Type", "value": "text/html; charset=utf-8"}]}}
+      },
+      "id": "respond-tweet-review",
+      "name": "Respond: Tweet Review",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [2640, 1160]
+    },
+
+    {
+      "parameters": {
+        "jsCode": "const d = $input.first().json;\nif (!d.draft) return [{ json: { error: 'Draft not found.', draftId: d.draftId } }];\nif (d.draft.stage !== 'linkedin_review') return [{ json: { error: `Cannot regenerate LinkedIn: draft is at stage '${d.draft.stage}'.`, draftId: d.draftId } }];\nreturn [{ json: { ok: true, ...d } }];"
+      },
+      "id": "guard-regen-linkedin",
+      "name": "Guard: regenerate_linkedin",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [660, 1120]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [{"value1": "={{ $json.ok }}", "value2": true}]
+        }
+      },
+      "id": "guard-regen-linkedin-if",
+      "name": "Guard: regen_linkedin IF",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [880, 1120]
+    },
+    {
+      "parameters": {
+        "command": "=linkedin:{{ Buffer.from($json.draft.idea).toString('base64') }}|{{ $json.draft.mediumUrl }}",
+        "options": {}
+      },
+      "id": "ssh-regen-linkedin",
+      "name": "SSH: Regenerate LinkedIn",
+      "type": "n8n-nodes-base.ssh",
+      "typeVersion": 1,
+      "position": [1100, 1160],
+      "onError": "continueErrorOutput",
+      "credentials": {"sshPassword": {"id": "BLOG_SSH_CREDENTIAL_ID", "name": "Blog SSH"}}
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "number": [{"value1": "={{ ($json.stdout || '').trim().length }}", "operation": "larger", "value2": 0}]
+        }
+      },
+      "id": "guard-regen-linkedin-output",
+      "name": "Guard: Regen LinkedIn Output",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [1320, 1160]
+    },
+    {
+      "parameters": {
+        "jsCode": "const d = $('Parse Request').first().json;\nconst mediumUrl = d.draft.mediumUrl;\nconst linkedinPost = $input.first().json.stdout.trim();\nconst newDraftId = Date.now().toString(36) + Math.random().toString(36).substring(2, 5);\nconst staticData = $getWorkflowStaticData('global');\nstaticData.drafts[d.draftId] = { ...d.draft, stage: 'superseded', updatedAt: new Date().toISOString() };\nstaticData.drafts[newDraftId] = { ...d.draft, mediumUrl, linkedinPost, stage: 'linkedin_review', createdAt: new Date().toISOString() };\nreturn [{ json: { ...d.draft, draftId: newDraftId, mediumUrl, linkedinPost } }];"
+      },
+      "id": "save-regen-linkedin",
+      "name": "Save Regen LinkedIn Draft",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1540, 1200]
+    },
+
+    {
+      "parameters": {
+        "jsCode": "const d = $input.first().json;\nif (!d.draft) return [{ json: { error: 'Draft not found.', draftId: d.draftId } }];\nif (d.draft.stage !== 'linkedin_published') return [{ json: { error: `Cannot retry tweet gen: draft is at stage '${d.draft.stage}'.`, draftId: d.draftId } }];\nreturn [{ json: { ok: true, ...d } }];"
+      },
+      "id": "guard-retry-tweet",
+      "name": "Guard: retry_tweet_gen",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [660, 1280]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [{"value1": "={{ $json.ok }}", "value2": true}]
+        }
+      },
+      "id": "guard-retry-tweet-if",
+      "name": "Guard: retry_tweet IF",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [880, 1280]
+    },
+    {
+      "parameters": {
+        "command": "=tweet:{{ Buffer.from($json.draft.idea).toString('base64') }}|{{ $json.draft.mediumUrl }}",
+        "options": {}
+      },
+      "id": "ssh-retry-tweet",
+      "name": "SSH: Retry Tweet Gen",
+      "type": "n8n-nodes-base.ssh",
+      "typeVersion": 1,
+      "position": [1100, 1320],
+      "onError": "continueErrorOutput",
+      "credentials": {"sshPassword": {"id": "BLOG_SSH_CREDENTIAL_ID", "name": "Blog SSH"}}
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "number": [{"value1": "={{ ($json.stdout || '').trim().length }}", "operation": "larger", "value2": 0}]
+        }
+      },
+      "id": "guard-retry-tweet-output",
+      "name": "Guard: Retry Tweet Output",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [1320, 1320]
+    },
+    {
+      "parameters": {
+        "jsCode": "const d = $('Parse Request').first().json;\nconst mediumUrl = d.draft.mediumUrl;\nconst tweet = $input.first().json.stdout.trim();\nconst newDraftId = Date.now().toString(36) + Math.random().toString(36).substring(2, 5);\nconst staticData = $getWorkflowStaticData('global');\nstaticData.drafts[d.draftId] = { ...d.draft, stage: 'superseded', updatedAt: new Date().toISOString() };\nstaticData.drafts[newDraftId] = { ...d.draft, tweet, stage: 'tweet_review', createdAt: new Date().toISOString() };\nreturn [{ json: { ...d.draft, draftId: newDraftId, tweet } }];"
+      },
+      "id": "save-retry-tweet",
+      "name": "Save Retry Tweet Draft",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1540, 1360]
+    },
+
+    {
+      "parameters": {
+        "jsCode": "const d = $input.first().json;\nif (!d.draft) return [{ json: { error: 'Draft not found.', draftId: d.draftId } }];\nif (d.draft.stage !== 'tweet_review') return [{ json: { error: `Cannot post tweet: draft is at stage '${d.draft.stage}'.`, draftId: d.draftId } }];\nreturn [{ json: { ok: true, ...d } }];"
+      },
+      "id": "guard-approve-tweet",
+      "name": "Guard: approve_tweet",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [660, 1440]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [{"value1": "={{ $json.ok }}", "value2": true}]
+        }
+      },
+      "id": "guard-approve-tweet-if",
+      "name": "Guard: approve_tweet IF",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [880, 1440]
+    },
+    {
+      "parameters": {
+        "jsCode": "const d = $input.first().json;\nconst staticData = $getWorkflowStaticData('global');\nstaticData.drafts[d.draftId] = { ...d.draft, stage: 'publishing_tweet', updatedAt: new Date().toISOString() };\nreturn [{ json: d }];"
+      },
+      "id": "set-stage-publishing-tweet",
+      "name": "Set Stage: publishing_tweet",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1100, 1480]
+    },
+    {
+      "parameters": {
+        "text": "={{ $json.draft.tweet }}"
+      },
+      "id": "twitter-post",
+      "name": "Twitter: Post Tweet",
+      "type": "n8n-nodes-base.twitter",
+      "typeVersion": 2,
+      "position": [1320, 1480],
+      "onError": "continueErrorOutput",
+      "credentials": {"twitterOAuth2Api": {"id": "TWITTER_CREDENTIAL_ID", "name": "Twitter/X"}}
+    },
+    {
+      "parameters": {
+        "jsCode": "const d = $('Parse Request').first().json;\nconst esc = s => String(s).replace(/&/g,'&amp;').replace(/\"/g,'&quot;').replace(/'/g,'&#39;').replace(/</g,'&lt;').replace(/>/g,'&gt;');\nreturn [{ json: { html: `<!DOCTYPE html><html><head><meta charset=\"UTF-8\"><title>Manual Check Required</title><style>body{font-family:system-ui,sans-serif;max-width:640px;margin:80px auto;padding:0 24px}.btn-yes{background:#16a34a;color:#fff;padding:10px 20px;border:none;border-radius:6px;cursor:pointer;font-weight:600}.btn-no{background:#dc2626;color:#fff;padding:10px 20px;border:none;border-radius:6px;cursor:pointer;font-weight:600}</style></head><body><h2>⚠️ Manual Check Required — Twitter/X</h2><p>We couldn't confirm if the tweet went through. Please check Twitter/X manually.</p><form method=\"POST\" action=\"/webhook/blog-pipeline\"><input type=\"hidden\" name=\"action\" value=\"confirm_publish\"><input type=\"hidden\" name=\"platform\" value=\"twitter\"><input type=\"hidden\" name=\"confirmed\" value=\"true\"><input type=\"hidden\" name=\"draftId\" value=\"${esc(d.draftId)}\"><button type=\"submit\" class=\"btn-yes\">✅ Yes it posted — mark complete</button></form><br><form method=\"POST\" action=\"/webhook/blog-pipeline\"><input type=\"hidden\" name=\"action\" value=\"confirm_publish\"><input type=\"hidden\" name=\"platform\" value=\"twitter\"><input type=\"hidden\" name=\"confirmed\" value=\"false\"><input type=\"hidden\" name=\"draftId\" value=\"${esc(d.draftId)}\"><button type=\"submit\" class=\"btn-no\">❌ It didn't post — revert to review</button></form></body></html>` } }];"
+      },
+      "id": "build-twitter-manual-check",
+      "name": "Build Twitter Manual Check HTML",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1540, 1400]
+    },
+    {
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "={{ $json.html }}",
+        "options": {"responseHeaders": {"entries": [{"name": "Content-Type", "value": "text/html; charset=utf-8"}]}}
+      },
+      "id": "respond-twitter-manual-check",
+      "name": "Respond: Twitter Manual Check",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [1760, 1400]
+    },
+    {
+      "parameters": {
+        "jsCode": "const d = $('Parse Request').first().json;\nconst staticData = $getWorkflowStaticData('global');\nstaticData.drafts[d.draftId] = { ...d.draft, stage: 'completed', updatedAt: new Date().toISOString() };\nreturn [{ json: { ...d.draft } }];"
+      },
+      "id": "save-completed",
+      "name": "Save: completed",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1540, 1540]
+    },
+    {
+      "parameters": {
+        "jsCode": "const d = $input.first().json;\nconst esc = s => String(s).replace(/&/g,'&amp;').replace(/\"/g,'&quot;').replace(/'/g,'&#39;').replace(/</g,'&lt;').replace(/>/g,'&gt;');\nconst mediumEsc = esc(d.mediumUrl || '');\nreturn [{ json: { html: `<!DOCTYPE html><html><head><meta charset=\"UTF-8\"><title>Done!</title><style>body{font-family:system-ui,sans-serif;max-width:640px;margin:80px auto;padding:0 24px}a{color:#2563eb}</style></head><body><h1>🎉 All Done!</h1><p>Your content has been published to all three platforms.</p><ul><li>📝 <strong>Medium:</strong> <a href=\"${mediumEsc}\" target=\"_blank\">${mediumEsc}</a></li><li>💼 <strong>LinkedIn:</strong> Posted</li><li>🐦 <strong>Twitter/X:</strong> Posted</li></ul><p><a href=\"/webhook/blog-pipeline\">← Write another post</a></p></body></html>` } }];"
+      },
+      "id": "build-done-html",
+      "name": "Build Done HTML",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1760, 1540]
+    },
+    {
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "={{ $json.html }}",
+        "options": {"responseHeaders": {"entries": [{"name": "Content-Type", "value": "text/html; charset=utf-8"}]}}
+      },
+      "id": "respond-done",
+      "name": "Respond: Done",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [1980, 1540]
+    },
+
+    {
+      "parameters": {
+        "jsCode": "const d = $input.first().json;\nif (!d.draft) return [{ json: { error: 'Draft not found.', draftId: d.draftId } }];\nif (d.draft.stage !== 'tweet_review') return [{ json: { error: `Cannot regenerate tweet: draft is at stage '${d.draft.stage}'.`, draftId: d.draftId } }];\nreturn [{ json: { ok: true, ...d } }];"
+      },
+      "id": "guard-regen-tweet",
+      "name": "Guard: regenerate_tweet",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [660, 1600]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [{"value1": "={{ $json.ok }}", "value2": true}]
+        }
+      },
+      "id": "guard-regen-tweet-if",
+      "name": "Guard: regen_tweet IF",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [880, 1600]
+    },
+    {
+      "parameters": {
+        "command": "=tweet:{{ Buffer.from($json.draft.idea).toString('base64') }}|{{ $json.draft.mediumUrl }}",
+        "options": {}
+      },
+      "id": "ssh-regen-tweet",
+      "name": "SSH: Regenerate Tweet",
+      "type": "n8n-nodes-base.ssh",
+      "typeVersion": 1,
+      "position": [1100, 1640],
+      "onError": "continueErrorOutput",
+      "credentials": {"sshPassword": {"id": "BLOG_SSH_CREDENTIAL_ID", "name": "Blog SSH"}}
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "number": [{"value1": "={{ ($json.stdout || '').trim().length }}", "operation": "larger", "value2": 0}]
+        }
+      },
+      "id": "guard-regen-tweet-output",
+      "name": "Guard: Regen Tweet Output",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [1320, 1640]
+    },
+    {
+      "parameters": {
+        "jsCode": "const d = $('Parse Request').first().json;\nconst mediumUrl = d.draft.mediumUrl;\nconst tweet = $input.first().json.stdout.trim();\nconst newDraftId = Date.now().toString(36) + Math.random().toString(36).substring(2, 5);\nconst staticData = $getWorkflowStaticData('global');\nstaticData.drafts[d.draftId] = { ...d.draft, stage: 'superseded', updatedAt: new Date().toISOString() };\nstaticData.drafts[newDraftId] = { ...d.draft, tweet, stage: 'tweet_review', createdAt: new Date().toISOString() };\nreturn [{ json: { ...d.draft, draftId: newDraftId, tweet } }];"
+      },
+      "id": "save-regen-tweet",
+      "name": "Save Regen Tweet Draft",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1540, 1680]
+    },
+
+    {
+      "parameters": {
+        "jsCode": "const d = $input.first().json;\nconst cancellableStages = ['blog_review', 'linkedin_review', 'tweet_review', 'medium_published', 'linkedin_published'];\nif (!d.draft) return [{ json: { error: 'Draft not found.', draftId: d.draftId } }];\nif (!cancellableStages.includes(d.draft.stage)) return [{ json: { error: `Cannot cancel: draft is already '${d.draft.stage}'.`, draftId: d.draftId } }];\nreturn [{ json: { ok: true, ...d } }];"
+      },
+      "id": "guard-cancel",
+      "name": "Guard: cancel",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [660, 1760]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [{"value1": "={{ $json.ok }}", "value2": true}]
+        }
+      },
+      "id": "guard-cancel-if",
+      "name": "Guard: cancel IF",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [880, 1760]
+    },
+    {
+      "parameters": {
+        "jsCode": "const d = $input.first().json;\nconst staticData = $getWorkflowStaticData('global');\nstaticData.drafts[d.draftId] = { ...d.draft, stage: 'cancelled', updatedAt: new Date().toISOString() };\nreturn [{ json: d }];"
+      },
+      "id": "save-cancelled",
+      "name": "Save: cancelled",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1100, 1800]
+    },
+    {
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "<!DOCTYPE html><html><head><meta charset=\"UTF-8\"><title>Cancelled</title><style>body{font-family:system-ui,sans-serif;max-width:600px;margin:80px auto;padding:0 24px}a{color:#2563eb}</style></head><body><h2>❌ Cancelled</h2><p>No post was published. Your draft has been cancelled.</p><p><a href=\"/webhook/blog-pipeline\">← Start a new idea</a></p></body></html>",
+        "options": {"responseHeaders": {"entries": [{"name": "Content-Type", "value": "text/html; charset=utf-8"}]}}
+      },
+      "id": "respond-cancelled",
+      "name": "Respond: Cancelled",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [1320, 1800]
+    },
+
+    {
+      "parameters": {
+        "jsCode": "const d = $input.first().json;\nconst platform = d.platform;\nconst confirmed = d.confirmed === 'true' || d.confirmed === true;\nconst expectedStage = { medium: 'publishing_medium', linkedin: 'publishing_linkedin', twitter: 'publishing_tweet' }[platform];\nif (!d.draft) return [{ json: { error: 'Draft not found.', draftId: d.draftId } }];\nif (!expectedStage) return [{ json: { error: `Unknown platform: ${platform}`, draftId: d.draftId } }];\nif (d.draft.stage !== expectedStage) return [{ json: { error: `Cannot confirm publish for ${platform}: draft is at stage '${d.draft.stage}'.`, draftId: d.draftId } }];\nreturn [{ json: { ok: true, platform, confirmed, ...d } }];"
+      },
+      "id": "guard-confirm-publish",
+      "name": "Guard: confirm_publish",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [660, 1920]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [{"value1": "={{ $json.ok }}", "value2": true}]
+        }
+      },
+      "id": "guard-confirm-if",
+      "name": "Guard: confirm IF",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [880, 1920]
+    },
+    {
+      "parameters": {
+        "jsCode": "const d = $input.first().json;\nconst staticData = $getWorkflowStaticData('global');\nif (d.confirmed) {\n  if (d.platform === 'medium') {\n    const mediumUrl = d.mediumUrlInput || '';\n    staticData.drafts[d.draftId] = { ...d.draft, mediumUrl, stage: 'medium_published', updatedAt: new Date().toISOString() };\n    return [{ json: { ...d, mediumUrl, nextAction: 'linkedin_gen' } }];\n  } else if (d.platform === 'linkedin') {\n    staticData.drafts[d.draftId] = { ...d.draft, stage: 'linkedin_published', updatedAt: new Date().toISOString() };\n    return [{ json: { ...d, nextAction: 'tweet_gen' } }];\n  } else if (d.platform === 'twitter') {\n    staticData.drafts[d.draftId] = { ...d.draft, stage: 'completed', updatedAt: new Date().toISOString() };\n    return [{ json: { ...d, nextAction: 'done' } }];\n  }\n} else {\n  if (d.platform === 'medium') {\n    staticData.drafts[d.draftId] = { ...d.draft, stage: 'blog_review', updatedAt: new Date().toISOString() };\n    return [{ json: { ...d, nextAction: 'blog_review' } }];\n  } else if (d.platform === 'linkedin') {\n    staticData.drafts[d.draftId] = { ...d.draft, stage: 'linkedin_review', updatedAt: new Date().toISOString() };\n    return [{ json: { ...d, nextAction: 'linkedin_review' } }];\n  } else if (d.platform === 'twitter') {\n    staticData.drafts[d.draftId] = { ...d.draft, stage: 'tweet_review', updatedAt: new Date().toISOString() };\n    return [{ json: { ...d, nextAction: 'tweet_review' } }];\n  }\n}\nreturn [{ json: d }];"
+      },
+      "id": "process-confirm",
+      "name": "Process Confirm",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1100, 1960]
+    },
+    {
+      "parameters": {
+        "dataType": "string",
+        "value1": "={{ $json.nextAction }}",
+        "rules": {
+          "rules": [
+            {"value2": "linkedin_gen"},
+            {"value2": "tweet_gen"},
+            {"value2": "done"},
+            {"value2": "blog_review"},
+            {"value2": "linkedin_review"},
+            {"value2": "tweet_review"}
+          ]
+        },
+        "fallbackOutput": "extra"
+      },
+      "id": "route-confirm-next",
+      "name": "Route Confirm Next",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 1,
+      "position": [1320, 1960]
+    },
+
+    {
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "=<!DOCTYPE html><html><head><meta charset=\"UTF-8\"><title>Error</title><style>body{font-family:system-ui,sans-serif;max-width:600px;margin:80px auto;padding:0 24px}a{color:#2563eb}</style></head><body><h2>⚠️ Unknown Action</h2><p>Action <code>{{ $json.action }}</code> is not recognized.</p><p><a href=\"/webhook/blog-pipeline\">← Start a new idea</a></p></body></html>",
+        "options": {"responseHeaders": {"entries": [{"name": "Content-Type", "value": "text/html; charset=utf-8"}]}}
+      },
+      "id": "respond-unknown-action",
+      "name": "Respond: Unknown Action",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [660, 2060]
+    }
+  ],
+  "connections": {
+    "GET: Blog Form": {"main": [[{"node": "Respond: Idea Form", "type": "main", "index": 0}]]},
+    "POST: Actions": {"main": [[{"node": "Parse Request", "type": "main", "index": 0}]]},
+    "Parse Request": {"main": [[{"node": "Route Action", "type": "main", "index": 0}]]},
+    "Route Action": {
+      "main": [
+        [{"node": "Guard: Blank Idea", "type": "main", "index": 0}],
+        [{"node": "Guard: approve_blog", "type": "main", "index": 0}],
+        [{"node": "Guard: regenerate_blog", "type": "main", "index": 0}],
+        [{"node": "Guard: retry_linkedin_gen", "type": "main", "index": 0}],
+        [{"node": "Guard: approve_linkedin", "type": "main", "index": 0}],
+        [{"node": "Guard: regenerate_linkedin", "type": "main", "index": 0}],
+        [{"node": "Guard: retry_tweet_gen", "type": "main", "index": 0}],
+        [{"node": "Guard: approve_tweet", "type": "main", "index": 0}],
+        [{"node": "Guard: regenerate_tweet", "type": "main", "index": 0}],
+        [{"node": "Guard: cancel", "type": "main", "index": 0}],
+        [{"node": "Guard: confirm_publish", "type": "main", "index": 0}],
+        [{"node": "Respond: Unknown Action", "type": "main", "index": 0}]
+      ]
+    },
+    "Guard: Blank Idea": {
+      "main": [
+        [{"node": "SSH: Generate Blog", "type": "main", "index": 0}],
+        [{"node": "Respond: Blank Idea Error", "type": "main", "index": 0}]
+      ]
+    },
+    "SSH: Generate Blog": {
+      "main": [
+        [{"node": "Guard: Blog Output", "type": "main", "index": 0}],
+        [{"node": "Build Blog Error HTML", "type": "main", "index": 0}]
+      ]
+    },
+    "Build Blog Error HTML": {"main": [[{"node": "Respond: Blog Error", "type": "main", "index": 0}]]},
+    "Guard: Blog Output": {
+      "main": [
+        [{"node": "Parse + Save Blog", "type": "main", "index": 0}],
+        [{"node": "Build Blog Error HTML", "type": "main", "index": 0}]
+      ]
+    },
+    "Parse + Save Blog": {"main": [[{"node": "Build Blog Review HTML", "type": "main", "index": 0}]]},
+    "Build Blog Review HTML": {"main": [[{"node": "Respond: Blog Review", "type": "main", "index": 0}]]},
+    "Save Regen Blog": {"main": [[{"node": "Build Blog Review HTML", "type": "main", "index": 0}]]},
+    "Save Retry LinkedIn Draft": {"main": [[{"node": "Build LinkedIn Review HTML", "type": "main", "index": 0}]]},
+    "Save Regen LinkedIn Draft": {"main": [[{"node": "Build LinkedIn Review HTML", "type": "main", "index": 0}]]},
+    "Build LinkedIn Review HTML": {"main": [[{"node": "Respond: LinkedIn Review", "type": "main", "index": 0}]]},
+    "Save Retry Tweet Draft": {"main": [[{"node": "Build Tweet Review HTML", "type": "main", "index": 0}]]},
+    "Save Regen Tweet Draft": {"main": [[{"node": "Build Tweet Review HTML", "type": "main", "index": 0}]]},
+    "Build Tweet Review HTML": {"main": [[{"node": "Respond: Tweet Review", "type": "main", "index": 0}]]},
+    "Guard: approve_blog": {"main": [[{"node": "Guard: approve_blog IF", "type": "main", "index": 0}]]},
+    "Guard: approve_blog IF": {
+      "main": [
+        [{"node": "Set Stage: publishing_medium", "type": "main", "index": 0}],
+        [{"node": "Respond: Guard Error", "type": "main", "index": 0}]
+      ]
+    },
+    "Set Stage: publishing_medium": {"main": [[{"node": "Medium: Publish Post", "type": "main", "index": 0}]]},
+    "Medium: Publish Post": {
+      "main": [
+        [{"node": "Set Stage: medium_published", "type": "main", "index": 0}],
+        [{"node": "Build Medium Manual Check HTML", "type": "main", "index": 0}]
+      ]
+    },
+    "Build Medium Manual Check HTML": {"main": [[{"node": "Respond: Medium Manual Check", "type": "main", "index": 0}]]},
+    "Set Stage: medium_published": {"main": [[{"node": "SSH: Generate LinkedIn", "type": "main", "index": 0}]]},
+    "SSH: Generate LinkedIn": {
+      "main": [
+        [{"node": "Guard: LinkedIn Output", "type": "main", "index": 0}],
+        [{"node": "Build LinkedIn Retry HTML", "type": "main", "index": 0}]
+      ]
+    },
+    "Build LinkedIn Retry HTML": {"main": [[{"node": "Respond: LinkedIn Retry", "type": "main", "index": 0}]]},
+    "Guard: LinkedIn Output": {
+      "main": [
+        [{"node": "Save LinkedIn Draft", "type": "main", "index": 0}],
+        [{"node": "Build LinkedIn Retry HTML", "type": "main", "index": 0}]
+      ]
+    },
+    "Save LinkedIn Draft": {"main": [[{"node": "Build LinkedIn Review HTML", "type": "main", "index": 0}]]},
+    "Guard: regenerate_blog": {"main": [[{"node": "Guard: regen_blog IF", "type": "main", "index": 0}]]},
+    "Guard: regen_blog IF": {
+      "main": [
+        [{"node": "SSH: Regenerate Blog", "type": "main", "index": 0}],
+        [{"node": "Respond: Guard Error", "type": "main", "index": 0}]
+      ]
+    },
+    "SSH: Regenerate Blog": {
+      "main": [
+        [{"node": "Guard: Regen Blog Output", "type": "main", "index": 0}],
+        [{"node": "Build Blog Error HTML", "type": "main", "index": 0}]
+      ]
+    },
+    "Guard: Regen Blog Output": {
+      "main": [
+        [{"node": "Save Regen Blog", "type": "main", "index": 0}],
+        [{"node": "Build Blog Error HTML", "type": "main", "index": 0}]
+      ]
+    },
+    "Guard: retry_linkedin_gen": {"main": [[{"node": "Guard: retry_linkedin IF", "type": "main", "index": 0}]]},
+    "Guard: retry_linkedin IF": {
+      "main": [
+        [{"node": "SSH: Retry LinkedIn Gen", "type": "main", "index": 0}],
+        [{"node": "Respond: Guard Error", "type": "main", "index": 0}]
+      ]
+    },
+    "SSH: Retry LinkedIn Gen": {
+      "main": [
+        [{"node": "Guard: Retry LinkedIn Output", "type": "main", "index": 0}],
+        [{"node": "Build LinkedIn Retry HTML", "type": "main", "index": 0}]
+      ]
+    },
+    "Guard: Retry LinkedIn Output": {
+      "main": [
+        [{"node": "Save Retry LinkedIn Draft", "type": "main", "index": 0}],
+        [{"node": "Build LinkedIn Retry HTML", "type": "main", "index": 0}]
+      ]
+    },
+    "Guard: approve_linkedin": {"main": [[{"node": "Guard: approve_linkedin IF", "type": "main", "index": 0}]]},
+    "Guard: approve_linkedin IF": {
+      "main": [
+        [{"node": "Set Stage: publishing_linkedin", "type": "main", "index": 0}],
+        [{"node": "Respond: Guard Error", "type": "main", "index": 0}]
+      ]
+    },
+    "Set Stage: publishing_linkedin": {"main": [[{"node": "LinkedIn: Post", "type": "main", "index": 0}]]},
+    "LinkedIn: Post": {
+      "main": [
+        [{"node": "Set Stage: linkedin_published", "type": "main", "index": 0}],
+        [{"node": "Build LinkedIn Manual Check HTML", "type": "main", "index": 0}]
+      ]
+    },
+    "Build LinkedIn Manual Check HTML": {"main": [[{"node": "Respond: LinkedIn Manual Check", "type": "main", "index": 0}]]},
+    "Set Stage: linkedin_published": {"main": [[{"node": "SSH: Generate Tweet", "type": "main", "index": 0}]]},
+    "SSH: Generate Tweet": {
+      "main": [
+        [{"node": "Guard: Tweet Output", "type": "main", "index": 0}],
+        [{"node": "Build Tweet Retry HTML", "type": "main", "index": 0}]
+      ]
+    },
+    "Build Tweet Retry HTML": {"main": [[{"node": "Respond: Tweet Retry", "type": "main", "index": 0}]]},
+    "Guard: Tweet Output": {
+      "main": [
+        [{"node": "Save Tweet Draft", "type": "main", "index": 0}],
+        [{"node": "Build Tweet Retry HTML", "type": "main", "index": 0}]
+      ]
+    },
+    "Save Tweet Draft": {"main": [[{"node": "Build Tweet Review HTML", "type": "main", "index": 0}]]},
+    "Guard: regenerate_linkedin": {"main": [[{"node": "Guard: regen_linkedin IF", "type": "main", "index": 0}]]},
+    "Guard: regen_linkedin IF": {
+      "main": [
+        [{"node": "SSH: Regenerate LinkedIn", "type": "main", "index": 0}],
+        [{"node": "Respond: Guard Error", "type": "main", "index": 0}]
+      ]
+    },
+    "SSH: Regenerate LinkedIn": {
+      "main": [
+        [{"node": "Guard: Regen LinkedIn Output", "type": "main", "index": 0}],
+        [{"node": "Build LinkedIn Retry HTML", "type": "main", "index": 0}]
+      ]
+    },
+    "Guard: Regen LinkedIn Output": {
+      "main": [
+        [{"node": "Save Regen LinkedIn Draft", "type": "main", "index": 0}],
+        [{"node": "Build LinkedIn Retry HTML", "type": "main", "index": 0}]
+      ]
+    },
+    "Guard: retry_tweet_gen": {"main": [[{"node": "Guard: retry_tweet IF", "type": "main", "index": 0}]]},
+    "Guard: retry_tweet IF": {
+      "main": [
+        [{"node": "SSH: Retry Tweet Gen", "type": "main", "index": 0}],
+        [{"node": "Respond: Guard Error", "type": "main", "index": 0}]
+      ]
+    },
+    "SSH: Retry Tweet Gen": {
+      "main": [
+        [{"node": "Guard: Retry Tweet Output", "type": "main", "index": 0}],
+        [{"node": "Build Tweet Retry HTML", "type": "main", "index": 0}]
+      ]
+    },
+    "Guard: Retry Tweet Output": {
+      "main": [
+        [{"node": "Save Retry Tweet Draft", "type": "main", "index": 0}],
+        [{"node": "Build Tweet Retry HTML", "type": "main", "index": 0}]
+      ]
+    },
+    "Guard: approve_tweet": {"main": [[{"node": "Guard: approve_tweet IF", "type": "main", "index": 0}]]},
+    "Guard: approve_tweet IF": {
+      "main": [
+        [{"node": "Set Stage: publishing_tweet", "type": "main", "index": 0}],
+        [{"node": "Respond: Guard Error", "type": "main", "index": 0}]
+      ]
+    },
+    "Set Stage: publishing_tweet": {"main": [[{"node": "Twitter: Post Tweet", "type": "main", "index": 0}]]},
+    "Twitter: Post Tweet": {
+      "main": [
+        [{"node": "Save: completed", "type": "main", "index": 0}],
+        [{"node": "Build Twitter Manual Check HTML", "type": "main", "index": 0}]
+      ]
+    },
+    "Build Twitter Manual Check HTML": {"main": [[{"node": "Respond: Twitter Manual Check", "type": "main", "index": 0}]]},
+    "Save: completed": {"main": [[{"node": "Build Done HTML", "type": "main", "index": 0}]]},
+    "Build Done HTML": {"main": [[{"node": "Respond: Done", "type": "main", "index": 0}]]},
+    "Guard: regenerate_tweet": {"main": [[{"node": "Guard: regen_tweet IF", "type": "main", "index": 0}]]},
+    "Guard: regen_tweet IF": {
+      "main": [
+        [{"node": "SSH: Regenerate Tweet", "type": "main", "index": 0}],
+        [{"node": "Respond: Guard Error", "type": "main", "index": 0}]
+      ]
+    },
+    "SSH: Regenerate Tweet": {
+      "main": [
+        [{"node": "Guard: Regen Tweet Output", "type": "main", "index": 0}],
+        [{"node": "Build Tweet Retry HTML", "type": "main", "index": 0}]
+      ]
+    },
+    "Guard: Regen Tweet Output": {
+      "main": [
+        [{"node": "Save Regen Tweet Draft", "type": "main", "index": 0}],
+        [{"node": "Build Tweet Retry HTML", "type": "main", "index": 0}]
+      ]
+    },
+    "Guard: cancel": {"main": [[{"node": "Guard: cancel IF", "type": "main", "index": 0}]]},
+    "Guard: cancel IF": {
+      "main": [
+        [{"node": "Save: cancelled", "type": "main", "index": 0}],
+        [{"node": "Respond: Guard Error", "type": "main", "index": 0}]
+      ]
+    },
+    "Save: cancelled": {"main": [[{"node": "Respond: Cancelled", "type": "main", "index": 0}]]},
+    "Guard: confirm_publish": {"main": [[{"node": "Guard: confirm IF", "type": "main", "index": 0}]]},
+    "Guard: confirm IF": {
+      "main": [
+        [{"node": "Process Confirm", "type": "main", "index": 0}],
+        [{"node": "Respond: Guard Error", "type": "main", "index": 0}]
+      ]
+    },
+    "Process Confirm": {"main": [[{"node": "Route Confirm Next", "type": "main", "index": 0}]]},
+    "Route Confirm Next": {
+      "main": [
+        [{"node": "SSH: Retry LinkedIn Gen", "type": "main", "index": 0}],
+        [{"node": "SSH: Retry Tweet Gen", "type": "main", "index": 0}],
+        [{"node": "Build Done HTML", "type": "main", "index": 0}],
+        [{"node": "Build Blog Review HTML", "type": "main", "index": 0}],
+        [{"node": "Build LinkedIn Review HTML", "type": "main", "index": 0}],
+        [{"node": "Build Tweet Review HTML", "type": "main", "index": 0}]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [],
+  "triggerCount": 2,
+  "updatedAt": "2026-03-15T00:00:00.000Z",
+  "versionId": "1"
+}
