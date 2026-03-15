@@ -116,26 +116,30 @@
     },
     {
       "parameters": {
-        "operation": "create",
-        "title": "={{ $json.draft.content.split('\\n')[0].replace(/^#+\\s*/, '') }}",
-        "contentFormat": "markdown",
-        "content": "={{ $json.draft.content }}",
-        "additionalFields": {
-          "publishStatus": "public"
-        }
+        "method": "POST",
+        "url": "https://dev.to/api/articles",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [{"name": "Content-Type", "value": "application/json"}]
+        },
+        "sendBody": true,
+        "bodyContentType": "raw",
+        "rawBody": "={{ JSON.stringify({article:{title:$json.draft.content.split('\\n')[0].replace(/^#+\\s*/,''),body_markdown:$json.draft.content,published:true}}) }}"
       },
       "id": "medium-publish",
-      "name": "Medium: Publish",
-      "type": "n8n-nodes-base.medium",
-      "typeVersion": 1,
+      "name": "Dev.to: Publish",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
       "position": [660, 500],
       "onError": "continueErrorOutput",
-      "credentials": {"mediumApi": {"id": "MEDIUM_CREDENTIAL_ID", "name": "Medium"}}
+      "credentials": {"httpHeaderAuth": {"id": "DEVTO_CREDENTIAL_ID", "name": "Dev.to API Key"}}
     },
     {
       "parameters": {
         "respondWith": "text",
-        "responseBody": "=<!DOCTYPE html><html><head><meta charset=\"UTF-8\"><title>Published!</title><style>body{font-family:system-ui,sans-serif;max-width:600px;margin:80px auto;padding:0 24px;text-align:center}a{color:#2563eb}</style></head><body><h2>🎉 Published to Medium!</h2><p><a href=\"{{ $json.url }}\" target=\"_blank\">View your post →</a></p><p><a href=\"/webhook/blog-simple\">← Write another</a></p></body></html>",
+        "responseBody": "=<!DOCTYPE html><html><head><meta charset=\"UTF-8\"><title>Published!</title><style>body{font-family:system-ui,sans-serif;max-width:600px;margin:80px auto;padding:0 24px;text-align:center}a{color:#2563eb}</style></head><body><h2>🎉 Published to Dev.to!</h2><p><a href=\"{{ $json.url }}\" target=\"_blank\">View your post →</a></p><p><a href=\"/webhook/blog-simple\">← Write another</a></p></body></html>",
         "options": {
           "responseHeaders": {
             "entries": [{"name": "Content-Type", "value": "text/html; charset=utf-8"}]
@@ -194,7 +198,7 @@
     "Route Action": {
       "main": [
         [{"node": "SSH: Generate via Claude", "type": "main", "index": 0}],
-        [{"node": "Medium: Publish", "type": "main", "index": 0}],
+        [{"node": "Dev.to: Publish", "type": "main", "index": 0}],
         [{"node": "SSH: Generate via Claude", "type": "main", "index": 0}],
         [{"node": "Respond: Cancelled", "type": "main", "index": 0}],
         [{"node": "Respond: Error", "type": "main", "index": 0}]
@@ -209,7 +213,7 @@
     "Save Draft + Build Preview": {
       "main": [[{"node": "Respond: Draft Preview", "type": "main", "index": 0}]]
     },
-    "Medium: Publish": {
+    "Dev.to: Publish": {
       "main": [
         [{"node": "Respond: Published", "type": "main", "index": 0}],
         [{"node": "Respond: Error", "type": "main", "index": 0}]

@@ -1,4 +1,4 @@
-TITLE: I Built a Single-Input Content Pipeline: Blog Idea → Medium → LinkedIn → Twitter (With Claude + n8n)
+TITLE: I Built a Single-Input Content Pipeline: Blog Idea → Dev.to → LinkedIn → Twitter (With Claude + n8n)
 ---
 
 Every time I publish a blog post, I do the same thing three times. Write the post. Then write a LinkedIn take on it. Then write a tweet. Same idea, three different formats, three different tones. It's not hard — it's just tedious. And tedious things are exactly what automation is for.
@@ -15,11 +15,11 @@ But it only did LinkedIn. And I kept writing the same idea three ways anyway. Wh
 
 ## What I Built
 
-A single browser form running locally. Type in an idea. Wait about 30 seconds while Claude writes a ~1000-word Medium-style blog post. Review it in the browser. Hit Approve — it publishes to Medium.
+A single browser form running locally. Type in an idea. Wait about 30 seconds while Claude writes a ~1000-word Dev.to-style blog post. Review it in the browser. Hit Approve — it publishes to Dev.to.
 
 Immediately after, Claude writes a LinkedIn post that links to the freshly published article. Review it. Approve. Then Claude writes a tweet. Review it. Approve.
 
-If any draft isn't right, hit Regenerate. The pipeline keeps your progress — it knows Medium is already published, knows what the URL is, and only regenerates the piece you're not happy with. No work is lost.
+If any draft isn't right, hit Regenerate. The pipeline keeps your progress — it knows Dev.to is already published, knows what the URL is, and only regenerates the piece you're not happy with. No work is lost.
 
 The whole thing runs locally. No cloud infrastructure, no new subscriptions. Just n8n in Docker, Claude CLI called over SSH, and a browser.
 
@@ -39,7 +39,7 @@ The idea text is base64-encoded before being sent over SSH, which handles edge c
 
 **The state machine.** The pipeline tracks 11 states: 8 in-flight stages from `blog_review` through `publishing_tweet`, plus terminal states `completed` and `cancelled`, and a replacement state `superseded` for regenerated drafts. The interesting ones are two recovery states: `medium_published` and `linkedin_published`. These get set immediately after a platform post succeeds, before the next Claude generation runs. If Claude fails mid-pipeline, the draft sits in a resumable state. A retry button appears. No data lost, no platform re-posted to.
 
-**The duplicate post problem.** What if n8n times out on a Medium API call, but Medium actually received it? A blind retry would double-post. The solution: when a platform API call fails, n8n shows a "Manual Check Required" page. Did it go through? If yes, paste the URL and continue. If no, revert and try again. The user makes the call — the pipeline doesn't guess.
+**The duplicate post problem.** What if n8n times out on a Dev.to API call, but Dev.to actually received it? A blind retry would double-post. The solution: when a platform API call fails, n8n shows a "Manual Check Required" page. Did it go through? If yes, paste the URL and continue. If no, revert and try again. The user makes the call — the pipeline doesn't guess.
 
 **Stage guards.** Every action checks two things before doing anything: does this draft ID exist, and is the draft in the expected stage? On every regenerate, the old draft ID is marked `superseded` and a new one is created. This means a stale browser tab can't accidentally re-approve a draft that's already been processed. Without this, hitting the back button and clicking Approve again would have fired a duplicate LinkedIn post.
 
@@ -59,11 +59,11 @@ The state store (`$getWorkflowStaticData`) is backed by n8n's SQLite. Fine for p
 
 macOS Keychain access in headless SSH sessions requires an explicit unlock step in the script. This is specific to the Mac environment where Claude CLI stores its OAuth tokens — if you're running this on Linux, the credential setup would be different.
 
-Medium's API has been deprecated for publications created after 2023. If the n8n Medium node stops working with your account, there's no automatic fallback in this build — manual posting to Medium would be required, which somewhat defeats the purpose of this step.
+Dev.to's API has been deprecated for publications created after 2023. If the n8n Dev.to node stops working with your account, there's no automatic fallback in this build — manual posting to Dev.to would be required, which somewhat defeats the purpose of this step.
 
 ## What It Looks Like in Practice
 
-Open the local webhook URL in a browser. Type an idea. About 30 seconds later, a blog draft appears in a scrollable preview. Read through it, hit Approve, and Medium publishes it.
+Open the local webhook URL in a browser. Type an idea. About 30 seconds later, a blog draft appears in a scrollable preview. Read through it, hit Approve, and Dev.to publishes it.
 
 The LinkedIn draft appears immediately after, already referencing the live article. Read it, approve. Then the tweet. Approve.
 
@@ -72,7 +72,7 @@ Total hands-on time: about 3 minutes per piece of content. The rest is waiting o
 ## TL;DR
 
 - One browser form, three platforms: type an idea once, review and approve each draft before it publishes anywhere
-- n8n + Claude CLI over SSH handles the full chain — blog → Medium → LinkedIn → Twitter — with a state machine that survives partial failures
+- n8n + Claude CLI over SSH handles the full chain — blog → Dev.to → LinkedIn → Twitter — with a state machine that survives partial failures
 - The hard parts weren't the AI generation — they were iframe sandboxing, duplicate-post prevention, and stale browser tabs firing old actions
 - A Codex plan review before implementation caught 5 real bugs, including a hidden form field injection that would have silently broken every submission with special characters
 

@@ -2,3 +2,4 @@
 n8n_data/
 n8n_data_backup_*/
 pending_post.json
+.DS_Store

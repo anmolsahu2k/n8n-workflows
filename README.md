@@ -29,7 +29,7 @@ Browser form (idea)
   → n8n (Docker)
     → SSH → Mac host → generate_content.sh blog:...
       → Review page in browser
-        → ✅ Approve → Medium publishes
+        → ✅ Approve → Dev.to publishes
           → SSH → linkedin:...|<mediumUrl>
             → Review → ✅ Approve → LinkedIn posts
               → SSH → tweet:...|<mediumUrl>
@@ -46,7 +46,7 @@ State is tracked in `$getWorkflowStaticData('global')` across requests. The pipe
 - Claude CLI installed and authenticated (`~/.local/bin/claude -p "test"` works)
 - Telegram bot token — for the LinkedIn pipeline only
 - LinkedIn Developer App with **Share on LinkedIn** + **Sign In with LinkedIn using OpenID Connect** products (requires a LinkedIn Company Page)
-- Medium integration token — for the blog pipeline
+- Dev.to API key — for the blog pipeline (Settings → Extensions → DEV API Keys → Generate)
 - Twitter OAuth2 credentials — for the blog pipeline
 
 ---
@@ -119,7 +119,7 @@ Copy the `https://...trycloudflare.com` URL into `WEBHOOK_URL` in `.env`, then r
 | Mac SSH (LinkedIn) | SSH | LinkedIn pipeline |
 | Mac SSH (Blog) | SSH | Blog pipeline |
 | LinkedIn OAuth2 API | LinkedIn OAuth2 API | Both |
-| Medium | Medium API | Blog pipeline |
+| Dev.to | Header Auth | Blog pipeline |
 | Twitter/X | Twitter OAuth2 API | Blog pipeline |
 
 **SSH credential config:** host `host.docker.internal`, port `22`, user `anmolsahu2k`, auth via private key.
@@ -177,6 +177,6 @@ docker compose logs -f n8n
 │   └── generate_content.sh          # Blog pipeline: handles blog/linkedin/tweet commands
 └── workflows/
     ├── linkedin-pipeline.json       # Telegram → LinkedIn
-    ├── blog-pipeline.json           # Browser form → Medium + LinkedIn + Twitter
+    ├── blog-pipeline.json           # Browser form → Dev.to + LinkedIn + Twitter
     └── blog-pipeline-simple.json    # Simplified version (for reference)
 ```
